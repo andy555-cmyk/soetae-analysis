@@ -65,6 +65,31 @@ def api_diagnose():
     except Exception as e:
         return jsonify({"error": f"오류: {e}"})
 
+@app.route("/health")
+def health():
+    """각 upstream API가 이 서버(호스팅) 네트워크에서 도달 가능한지 진단."""
+    import requests as _rq
+    out = {}
+    tests = {
+        "vworld": ("https://api.vworld.kr/req/address",
+                   {"service":"address","request":"getcoord","version":"2.0","crs":"epsg:4326",
+                    "type":"parcel","address":"부산광역시 기장군 기장읍 동부리 487","format":"json",
+                    "key":config.VWORLD_KEY}),
+        "sbiz": ("https://apis.data.go.kr/B553077/api/open/sdsc2/storeListInRadius",
+                 {"serviceKey":config.SBIZ_SERVICE_KEY,"radius":500,"cx":129.2136,"cy":35.2473,
+                  "type":"json","pageNo":1,"numOfRows":1}),
+        "grade": ("https://apis.data.go.kr/1611000/DceDgnssGradeService/getGradeSigngu",
+                  {"serviceKey":config.SBIZ_SERVICE_KEY,"signguCd":"26710","gradeCd":"GRADE00002",
+                   "year":"2016","type":"json","numOfRows":1,"pageNo":1}),
+    }
+    for name,(url,params) in tests.items():
+        try:
+            r = _rq.get(url, params=params, timeout=15)
+            out[name] = {"http": r.status_code, "body": r.text[:120]}
+        except Exception as e:
+            out[name] = {"error": str(e)[:120]}
+    return jsonify(out)
+
 @app.route("/")
 def index():
     return render_template_string(PAGE)
