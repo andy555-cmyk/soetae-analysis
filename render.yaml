@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: soetae-analysis
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --timeout 120
+    envVars:
+      - key: SBIZ_SERVICE_KEY
+        sync: false
+      - key: VWORLD_KEY
+        sync: false
