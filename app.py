@@ -18,7 +18,8 @@ def _signgu_from_geo(geo):
 def diagnose(address, radius=500, year="2016"):
     geo = geocode.geocode(address)
     if not geo:
-        return {"error": "주소를 좌표로 변환하지 못했습니다. 주소를 확인해주세요."}
+        dbg = getattr(geocode, "_LAST_VWORLD_DEBUG", None)
+        return {"error": f"주소를 좌표로 변환하지 못했습니다. (VWorld 응답: {dbg})"}
     # 상권
     rows = commercial.stores_in_radius(geo["lon"], geo["lat"], radius) or []
     comm = commercial.summarize(rows) if rows else {"total_stores":0,"by_major_category":{},"note":""}

@@ -20,13 +20,17 @@ def geocode(address: str):
         try:
             d = r.json()
         except Exception:
-            d = {}
-        if d.get("response", {}).get("status") == "OK":
-            p = d["response"]["result"]["point"]
-            s = d["response"]["refined"]["structure"]
+            d = {"_raw": r.text[:200]}
+        resp = d.get("response", {})
+        if resp.get("status") == "OK":
+            p = resp["result"]["point"]
+            s = resp["refined"]["structure"]
             return {"lon": float(p["x"]), "lat": float(p["y"]),
                     "sido": s.get("level1"), "sigungu": s.get("level2"),
                     "emd": s.get("level4L"), "ldongCd": s.get("level4LC"), "source": "vworld"}
+        # 진단: VWorld가 OK가 아니면 실제 상태/메시지를 노출
+        globals()["_LAST_VWORLD_DEBUG"] = {"status": resp.get("status"),
+            "error": resp.get("error"), "raw": d.get("_raw"), "http": r.status_code}
     if config.KAKAO_REST_KEY:
         r = _get("https://dapi.kakao.com/v2/local/search/address.json",
             headers={"Authorization": f"KakaoAK {config.KAKAO_REST_KEY}"},
