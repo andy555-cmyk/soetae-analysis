@@ -1,23 +1,35 @@
 """상가(상권)정보 반경검색 - 소상공인시장진흥공단 (data.go.kr B553077).
-현재 유효 엔드포인트: sdsc2 (구버전 sdsc 는 폐기됨 - 2026.07 확인)."""
-import requests, collections, config
+현재 유효 엔드포인트: sdsc2 (구버전 sdsc 는 폐기됨 - 2026.07 확인).
+클라우드 환경 안정화를 위해 HTTPS + 재시도 적용."""
+import time, requests, collections, config
 
-BASE = "http://apis.data.go.kr/B553077/api/open/sdsc2/storeListInRadius"
+BASE = "https://apis.data.go.kr/B553077/api/open/sdsc2/storeListInRadius"
+
+def _get_json(params, retries=3):
+    last = None
+    for i in range(retries):
+        try:
+            r = requests.get(BASE, params=params, timeout=30)
+            return r.json()
+        except Exception as e:
+            last = e
+            time.sleep(1.2 * (i + 1))
+    raise last
 
 def stores_in_radius(lon: float, lat: float, radius_m: int = 500):
     if not config.SBIZ_SERVICE_KEY:
         return None  # 키 없음 -> mock
     rows, page = [], 1
     while True:
-        r = requests.get(BASE, params={
+        d = _get_json({
             "serviceKey": config.SBIZ_SERVICE_KEY, "radius": radius_m,
             "cx": lon, "cy": lat, "type": "json",
             "pageNo": page, "numOfRows": 1000,
-        }, timeout=30)
-        body = r.json().get("body", {})
+        })
+        body = d.get("body", {}) if isinstance(d, dict) else {}
         items = (body.get("items") or [])
         rows.extend(items)
-        total = int(body.get("totalCount", 0))
+        total = int(body.get("totalCount", 0) or 0)
         if page * 1000 >= total or not items:
             break
         page += 1
