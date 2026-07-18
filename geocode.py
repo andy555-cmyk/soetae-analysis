@@ -44,5 +44,31 @@ def geocode(address: str):
                     "emd": addr.get("region_3depth_name"), "ldongCd": addr.get("b_code"), "source": "kakao"}
     return None  # 키 없음 -> mock 모드에서 대체
 
+def reverse_geocode(lat: float, lon: float):
+    """좌표 -> 주소+행정구역코드 (지도 클릭 지점 진단용). VWorld getAddress."""
+    if not config.VWORLD_KEY:
+        return None
+    try:
+        r = _get("https://api.vworld.kr/req/address", params={
+            "service": "address", "request": "getAddress", "version": "2.0",
+            "crs": "epsg:4326", "point": f"{lon},{lat}", "type": "both",
+            "format": "json", "key": config.VWORLD_KEY,
+        }, headers={"Referer": "http://localhost"})
+        d = r.json()
+        res = d.get("response", {})
+        if res.get("status") != "OK":
+            return None
+        items = res.get("result", [])
+        pick = next((x for x in items if x.get("type") == "parcel"), items[0] if items else None)
+        if not pick:
+            return None
+        s = pick.get("structure", {})
+        return {"lon": float(lon), "lat": float(lat),
+                "address": pick.get("text"),
+                "sido": s.get("level1"), "sigungu": s.get("level2"),
+                "emd": s.get("level4L"), "ldongCd": s.get("level4LC"), "source": "vworld_rev"}
+    except Exception:
+        return None
+
 def _has_road(a):
     return any(k in a for k in ["로", "길"]) and "리" not in a.split()[-1]
