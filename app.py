@@ -9,10 +9,12 @@ Noto Sans KR + 뉴트럴/슬레이트 팔레트 + 종합판정 카드(빨강/초
 등급 방향은 전국 상대등급 해석(증감률↑=양호, 노후율↑=쇠퇴)을 적용하고 화면에 명시(잠정)."""
 import os
 from flask import Flask, request, jsonify
-import geocode, commercial, decline_grade, vacancy
+import geocode, commercial, decline_grade, decline_idx, vacancy, config
 
 app = Flask(__name__)
 _GRADE_CACHE = {}   # 시군구+연도 쇠퇴등급 캐시(정적)
+_IDX_CACHE = {}     # 시군구+연도 쇠퇴지표(실측값) 캐시(정적)
+DC = config.DECLINE_CRITERIA  # 법정 기준(인구20%/사업체5%/노후50%, 2개 충족)
 
 GRADE_LABEL = {"A":"양호","B":"주의","C":"경계","D":"쇠퇴 진행","E":"쇠퇴 심각","–":"미상"}
 
@@ -36,7 +38,7 @@ def _find_grade(grades, *keys):
     return None, None
 
 def _band_increase(g):
-    """증가형 지표(인구변화율·사업체증감률): 등급 높을수록 양호."""
+    """증가형 지표(등급 1~10, 높을수록 양호)."""
     if g is None: return ("–", GRADE_LABEL["–"], False)
     if g >= 9: return ("A", GRADE_LABEL["A"], False)
     if g >= 7: return ("B", GRADE_LABEL["B"], False)
@@ -45,7 +47,7 @@ def _band_increase(g):
     return ("E", GRADE_LABEL["E"], True)
 
 def _band_old(g):
-    """노후형 지표(노후건축물비율): 등급 높을수록 노후 심함(쇠퇴)."""
+    """노후형 지표(등급 1~10, 높을수록 노후=쇠퇴)."""
     if g is None: return ("–", GRADE_LABEL["–"], False)
     if g <= 2: return ("A", GRADE_LABEL["A"], False)
     if g <= 4: return ("B", GRADE_LABEL["B"], False)
@@ -53,27 +55,64 @@ def _band_old(g):
     if g <= 8: return ("D", GRADE_LABEL["D"], True)
     return ("E", GRADE_LABEL["E"], True)
 
-def compute_verdict(grades):
-    """검증된 쇠퇴등급 지표에서 3대 지표 종합판정을 산출.
-    법정 활성화지역 지정(원본 증감률·시계열 필요)이 아니라 전국 상대등급 기반 잠정 판정."""
-    pop_v, pop_name = _find_grade(grades, "인구변화율(주민등록", "인구순이동률", "인구변화율")
-    biz_v, biz_name = _find_grade(grades, "총사업체수증감률", "총종사자수증감률")
-    bld_v, bld_name = _find_grade(grades, "노후건축물비율", "노후주택비율")
+def _band_real_decline(v, thr):
+    """실측 변화율(%). 감소=음수. thr=법정 감소기준(양수). 감소가 thr 이상이면 법정 충족."""
+    if v is None: return ("–", GRADE_LABEL["–"], False)
+    if v <= -thr: return ("E", "쇠퇴 심각", True)
+    if v < 0: return ("C", "감소 추세", False)
+    if v >= thr: return ("A", "양호", False)
+    return ("B", "주의", False)
 
-    pl, plab, pdec = _band_increase(pop_v)
-    bl, blab, bdec = _band_increase(biz_v)
-    dl, dlab, ddec = _band_old(bld_v)
+def _band_real_old(v):
+    """실측 노후건축물 비율(%). 50% 이상이면 법정 충족."""
+    if v is None: return ("–", GRADE_LABEL["–"], False)
+    if v >= 70: return ("E", "쇠퇴 심각", True)
+    if v >= 60: return ("D", "쇠퇴 진행", True)
+    if v >= 50: return ("C", "경계", True)
+    if v >= 40: return ("B", "주의", False)
+    return ("A", "양호", False)
+
+def _mk(code, label, direction, real, grade_v, grade_name, real_keys, grade_default):
+    """지표 1개 구성. 실측값(real) 있으면 법정 기준으로, 없으면 등급기반으로."""
+    rv, rname, runit = decline_idx.find_value(real, *real_keys) if real else (None, None, None)
+    if rv is not None:
+        if direction == "old":
+            letter, status, dec = _band_real_old(rv)
+            crit = f"실측 노후건축물 비율 {rv}%. 법정 기준: 준공 20년 이상 건축물 50% 이상이면 충족."
+        else:
+            thr = DC["population_drop_pct"] if code == "POP" else DC["business_drop_pct"]
+            letter, status, dec = _band_real_decline(rv, thr)
+            crit = f"실측 변화율 {rv}%. 법정 기준: {thr}% 이상 감소 시 충족(음수=감소)."
+        unit = runit or "%"
+        return {"code":code, "label":label, "source_name":rname or grade_default,
+                "mode":"실측", "display_value":rv, "display_unit":unit,
+                "grade":grade_v, "letter":letter, "status":status, "is_decline":dec,
+                "direction":direction, "criterion":crit}
+    # 폴백: 등급기반
+    if direction == "old":
+        letter, status, dec = _band_old(grade_v)
+        crit = "전국 상대등급(1~10) · 등급 높을수록 노후 건축물 비중 큼. 법정 기준: 노후건축물 50% 이상."
+    else:
+        letter, status, dec = _band_increase(grade_v)
+        crit = "전국 상대등급(1~10) · 등급 낮을수록 감소 우세. 법정 확정은 원본 증감률 연동 필요."
+    return {"code":code, "label":label, "source_name":grade_name or grade_default,
+            "mode":"상대등급", "display_value":grade_v, "display_unit":"/ 10 등급",
+            "grade":grade_v, "letter":letter, "status":status, "is_decline":dec,
+            "direction":direction, "criterion":crit}
+
+def compute_verdict(grades, real=None):
+    """3대 지표 종합판정. 실측 지표값(real) 있으면 법정 기준 판정, 없으면 전국 상대등급 잠정."""
+    pop_g, pop_gn = _find_grade(grades, "인구변화율(주민등록", "인구순이동률", "인구변화율")
+    biz_g, biz_gn = _find_grade(grades, "총사업체수증감률", "총종사자수증감률")
+    bld_g, bld_gn = _find_grade(grades, "노후건축물비율", "노후주택비율")
 
     indicators = [
-        {"code":"POP","label":"인구 변화","source_name":pop_name or "인구변화율",
-         "grade":pop_v,"letter":pl,"status":plab,"is_decline":pdec,"direction":"increase",
-         "criterion":"전국 상대등급(1~10) · 등급 낮을수록 인구 감소 우세. 법정 기준: 최근 30년 최대 인구 대비 20% 이상 감소 또는 5년간 3년 연속 감소."},
-        {"code":"BIZ","label":"사업체 변화","source_name":biz_name or "총사업체수증감률",
-         "grade":biz_v,"letter":bl,"status":blab,"is_decline":bdec,"direction":"increase",
-         "criterion":"전국 상대등급(1~10) · 등급 낮을수록 사업체 감소 우세. 법정 기준: 최근 10년 최대 사업체수 대비 5% 이상 감소 또는 5년간 3년 연속 감소."},
-        {"code":"BLDG","label":"노후 건축물","source_name":bld_name or "노후건축물비율",
-         "grade":bld_v,"letter":dl,"status":dlab,"is_decline":ddec,"direction":"old",
-         "criterion":"전국 상대등급(1~10) · 등급 높을수록 노후 건축물 비중 큼. 법정 기준: 준공 후 20년 이상 경과 건축물 비율 50% 이상."},
+        _mk("POP", "인구 변화", "increase", real, pop_g, pop_gn,
+            ("인구변화율(주민등록", "인구순이동률", "인구변화율"), "인구변화율"),
+        _mk("BIZ", "사업체 변화", "increase", real, biz_g, biz_gn,
+            ("총사업체수증감", "총종사자수증감"), "총사업체수증감율"),
+        _mk("BLDG", "노후 건축물", "old", real, bld_g, bld_gn,
+            ("노후건축물비율", "노후주택비율"), "노후건축물비율"),
     ]
     decline_count = sum(1 for i in indicators if i["is_decline"])
     letters = [i["letter"] for i in indicators]
@@ -85,13 +124,19 @@ def compute_verdict(grades):
         overall = "C"
     else:
         overall = "A" if all(l == "A" for l in letters if l != "–") and "–" not in letters else "B"
+    real_used = any(i["mode"] == "실측" for i in indicators)
+    if real_used:
+        note = "쇠퇴진단 실측지표(인구·사업체·노후건축물) 기반 판정입니다. 「도시재생 활성화 및 지원에 관한 특별법 시행령」상 3대 지표 중 2개 이상 충족 시 활성화지역 지정 검토 대상입니다."
+    else:
+        note = "전국 상대등급(1~10) 기반 잠정 종합판정입니다. 증감률↑=양호, 노후율↑=쇠퇴로 해석했으며, 법정 활성화지역 지정 여부는 원본 증감률 데이터 연동 후 확정됩니다."
     return {
         "overall_grade": overall,
         "overall_label": GRADE_LABEL.get(overall, "미상"),
         "decline_count": decline_count,
         "is_declining": decline_count >= 2,
         "indicators": indicators,
-        "basis_note": "전국 상대등급(1~10) 기반 잠정 종합판정입니다. 증감률↑=양호, 노후율↑=쇠퇴로 해석했으며, 「도시재생 활성화 및 지원에 관한 특별법 시행령」상 활성화지역 지정 여부는 원본 증감률·시계열 데이터 연동 후 확정됩니다.",
+        "real_used": real_used,
+        "basis_note": note,
     }
 
 def compute_tags(comm, grades, verdict):
@@ -111,16 +156,22 @@ def compute_tags(comm, grades, verdict):
     if aged_v is not None and aged_v >= 7: tags.append(["고령화 심화", "warn"])
     if verdict:
         pop = next((i for i in verdict["indicators"] if i["code"] == "POP"), None)
-        if pop and pop["grade"] is not None:
+        if pop and pop.get("letter") not in (None, "–"):
             tags.append(["인구 감소 우세", "warn"] if pop["is_decline"] else ["인구 유지·증가", "good"])
         tags.append(["쇠퇴 우려 지역", "warn"] if verdict["is_declining"] else ["정량 안정권", "good"])
     return tags
 
-def diagnose(address, radius=500, year="2016"):
-    geo = geocode.geocode(address)
-    if not geo:
-        dbg = getattr(geocode, "_LAST_GEO_DEBUG", None)
-        return {"error": f"주소를 좌표로 변환하지 못했습니다. ({dbg})"}
+def diagnose(address=None, radius=500, year="2016", latlon=None):
+    if latlon:  # 지도 클릭 지점 진단(역지오코딩)
+        geo = geocode.reverse_geocode(latlon[0], latlon[1])
+        if not geo:
+            return {"error": "클릭한 지점의 주소를 확인하지 못했습니다. 지도 안 육지 지점을 눌러주세요."}
+        address = geo.get("address") or address or "지도 선택 지점"
+    else:
+        geo = geocode.geocode(address)
+        if not geo:
+            dbg = getattr(geocode, "_LAST_GEO_DEBUG", None)
+            return {"error": f"주소를 좌표로 변환하지 못했습니다. ({dbg})"}
     rows = commercial.stores_in_radius(geo["lon"], geo["lat"], radius) or []
     comm = commercial.summarize(rows) if rows else {"total_stores":0,"by_major_category":{},"note":""}
     key = f"{round(geo['lat'],4)}_{round(geo['lon'],4)}_{radius}"
@@ -141,18 +192,26 @@ def diagnose(address, radius=500, year="2016"):
         if ck not in _GRADE_CACHE:
             _GRADE_CACHE[ck] = decline_grade.sigungu_indicators(signgu, year)
         grades = _GRADE_CACHE[ck]
+    idx_vals = []
+    if signgu:
+        ick = f"idx_{signgu}_{year}"
+        if ick not in _IDX_CACHE:
+            try: _IDX_CACHE[ick] = decline_idx.sigungu_values(signgu, year)
+            except Exception: _IDX_CACHE[ick] = []
+        idx_vals = _IDX_CACHE[ick]
     gonga = next((int(g["value"]) for g in grades if "공가율" in (g["mean"] or "")), None)
     vac["gonga"] = gonga
     by_sector = {}
     for g in grades:
         by_sector.setdefault(g["sector"], []).append(
             {"name": (g["mean"] or "").replace(" 등급",""), "value": int(g["value"]) if g["value"] else None})
-    verdict = compute_verdict(grades) if grades else None
+    verdict = compute_verdict(grades, idx_vals) if (grades or idx_vals) else None
     tags = compute_tags(comm, grades, verdict)
+    no_grade = (bool(signgu) and not grades)  # 시군구는 잡혔으나 등급 데이터 미제공(예: 울산 일부)
     return {"address":address, "lat":geo["lat"], "lon":geo["lon"],
             "sigungu":geo.get("sigungu"), "emd":geo.get("emd"), "radius":radius,
             "commercial":comm, "vacancy":vac, "grades_by_sector":by_sector,
-            "diagnosis":verdict, "tags":tags,
+            "diagnosis":verdict, "tags":tags, "no_grade":no_grade,
             "grade_area":geo.get("sigungu"), "grade_year":year,
             "grade_count": len(grades)}
 
@@ -185,9 +244,12 @@ def config_get(k):
 def api_diagnose():
     addr = request.args.get("address","").strip()
     radius = int(request.args.get("radius", 500))
-    if not addr:
-        return jsonify({"error":"주소를 입력하세요."})
+    lat = request.args.get("lat"); lon = request.args.get("lon")
     try:
+        if lat and lon:  # 지도 클릭 지점
+            return jsonify(diagnose(radius=radius, latlon=(float(lat), float(lon))))
+        if not addr:
+            return jsonify({"error":"주소를 입력하세요."})
         return jsonify(diagnose(addr, radius))
     except Exception as e:
         return jsonify({"error": f"오류: {e}"})
@@ -314,6 +376,7 @@ input#addr::placeholder{color:var(--n400)}
 .gseg{flex:1;border-radius:3px;background:var(--n100)}
 .gseg.on{background:var(--accent)}
 .gcap{margin-top:8px;font-size:11px;color:var(--n500);text-align:right}
+.srcnote{margin-top:20px;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--em700);font-weight:600}
 
 /* 카드 공통 */
 .card{background:var(--card);border:1px solid var(--n200);border-radius:16px;padding:24px;box-shadow:var(--shadow)}
@@ -578,6 +641,14 @@ function render(d){
   h+='<div class="toolbar no-print"><div class=backrow onclick="reset()">'+IC.back+'다른 지역 진단</div>'
     +'<button class="pdfbtn solid" onclick="printAll()">'+IC.dl+' PDF 보고서 저장</button></div>';
 
+  // 등급 데이터 미제공 안내(예: 울산 일부)
+  if(!dg && d.no_grade){
+    h+='<div class="card" style="border-color:var(--gC);background:#fffbeb"><div style="display:flex;gap:10px;align-items:flex-start">'
+      +'<span style="color:var(--gD)">'+IC.alert+'</span><div><div style="font-weight:700;font-size:15px">쇠퇴진단 등급 데이터 미제공 지역</div>'
+      +'<div class=cnote style="margin-top:4px">'+esc(d.grade_area||d.sigungu||'이 지역')+'은(는) 국토부 쇠퇴진단 등급 API에 데이터가 없습니다(일부 시·군·구 한계). '
+      +'대신 아래 <strong>상권·빈점포·지도</strong>는 실데이터로 정상 진단됩니다.</div></div></div></div>';
+  }
+
   // 종합판정
   if(dg){
     const bad=dg.is_declining;
@@ -597,13 +668,15 @@ function render(d){
     // 3대 지표
     h+='<div class=indgrid>';
     for(const ind of dg.indicators){
-      const dec=ind.is_decline;
+      const dec=ind.is_decline, real=(ind.mode==='실측');
+      const dv=(ind.display_value==null?'–':ind.display_value), du=(ind.display_unit||'');
+      const ctLabel = real ? (dec?'법정 기준 충족':'법정 기준 미충족') : (dec?'쇠퇴 우세':'양호 우세');
       h+='<div class=indcard><div class=ih><div><div class=il>'+esc(ind.label)+'</div><div class=iy title="'+esc(ind.source_name)+'">'+esc(ind.source_name)+'</div></div>'
         +'<span class=pill style="background:'+GC[ind.letter]+'">'+esc(ind.letter)+' · '+esc(ind.status)+'</span></div>'
-        +'<div class=big><span class=bigv>'+(ind.grade==null?'–':ind.grade)+'</span><span class=bigu>/ 10 등급</span></div>'
+        +'<div class=big><span class=bigv>'+dv+'</span><span class=bigu>'+esc(du)+'</span></div>'
         +'<div class="critbox '+(dec?'bad':'good')+'"><span class=ci style="color:'+(dec?'var(--red600)':'var(--em600)')+'">'+(dec?IC.check:IC.x)+'</span>'
-        +'<div><div class=ct>'+(dec?'쇠퇴 우세':'양호 우세')+'</div><div class=cd>'+esc(ind.criterion)+'</div></div></div>'
-        +gauge(ind.grade)
+        +'<div><div class=ct>'+ctLabel+'</div><div class=cd>'+esc(ind.criterion)+'</div></div></div>'
+        +(real?'<div class=srcnote>'+IC.check.replace(/width=16 height=16/,'width=13 height=13')+' 쇠퇴진단 실측지표 기반</div>':gauge(ind.grade))
         +'</div>';
     }
     h+='</div>';
@@ -612,7 +685,7 @@ function render(d){
   }
 
   // 지도 + 메모
-  h+='<section class=sec2><div><div class=h3>지역 위치</div><div class=mapcard><div id=map></div></div></div>'
+  h+='<section class=sec2><div><div class=h3>지역 위치 <span style="font-weight:400;color:var(--n400);font-size:12px">· 지도 클릭 = 그 지점 재진단 · 우측 상단에서 위성 전환</span></div><div class=mapcard><div id=map></div></div></div>'
     +'<div><div class=h3>진단 요약 메모</div><div class="card memo">';
   if(dg){
     h+='<p><strong>'+esc(d.sigungu||'')+'</strong> 일대는 '+esc(d.grade_year)+'년 기준 3대 쇠퇴진단지표 중 '
@@ -683,18 +756,33 @@ function render(d){
 
   out.innerHTML=h;
 
-  // Leaflet 지도 (프로토타입: 빨간 마커)
+  // Leaflet 지도 (일반/위성 토글 + 클릭 진단 + 반경원)
   try{
     if(window.L){
       if(_map){_map.remove();_map=null;}
       _map=L.map('map',{scrollWheelZoom:false}).setView([d.lat,d.lon],14);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap',maxZoom:19}).addTo(_map);
+      const osm=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap',maxZoom:19}).addTo(_map);
+      const sat=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{attribution:'&copy; Esri World Imagery',maxZoom:19});
+      L.control.layers({'일반 지도':osm,'위성/항공':sat},null,{position:'topright'}).addTo(_map);
       const ic=L.divIcon({className:'',html:'<div style="width:24px;height:24px;border-radius:50%;background:#dc2626;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3)"></div>',iconSize:[24,24],iconAnchor:[12,12]});
       L.marker([d.lat,d.lon],{icon:ic}).addTo(_map).bindPopup(esc(d.address));
       if(d.radius){L.circle([d.lat,d.lon],{radius:d.radius,color:'#0f172a',weight:1,fillColor:'#0f172a',fillOpacity:.05}).addTo(_map);}
+      _map.on('click',function(e){ runAt(e.latlng.lat, e.latlng.lng); });
       setTimeout(()=>{if(_map)_map.invalidateSize();},200);
     }
   }catch(e){}
+}
+
+async function runAt(lat, lon){
+  RADIUS = RADIUS || 500;
+  out.innerHTML='<div class="card"><div class=loading><div class=spin></div>선택 지점을 진단하는 중…</div></div>';
+  out.scrollIntoView({behavior:'smooth',block:'start'});
+  try{
+    const r=await fetch('/api/diagnose?lat='+lat+'&lon='+lon+'&radius='+RADIUS);
+    const d=await r.json();
+    if(d.error){out.innerHTML='<div class=err>'+esc(d.error)+'</div>';}
+    else{ if(d.address) document.getElementById('addr').value=d.address; render(d); }
+  }catch(e){out.innerHTML='<div class=err>요청 실패: '+esc(e)+'</div>';}
 }
 </script></div></body></html>"""
 
