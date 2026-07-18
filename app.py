@@ -22,11 +22,14 @@ def _signgu_from_geo(geo):
     return None
 
 def _find_grade(grades, *keys):
-    """grades에서 mean에 keys 중 하나가 포함된 지표의 (등급값 int, 표기명) 반환."""
+    """grades에서 mean에 keys 중 하나가 포함된 지표의 (등급값 int, 표기명) 반환.
+    정부 API의 '률'/'율' 표기 혼용(총사업체수증감율 등)을 정규화해 매칭한다."""
+    def _norm(s): return (s or "").replace("률", "율")
     for k in keys:
+        nk = _norm(k)
         for g in grades:
             m = g.get("mean") or ""
-            if k in m:
+            if nk in _norm(m):
                 v = g.get("value")
                 try: return int(v), m.replace(" 등급", "")
                 except (TypeError, ValueError): return None, m.replace(" 등급", "")
@@ -91,6 +94,28 @@ def compute_verdict(grades):
         "basis_note": "전국 상대등급(1~10) 기반 잠정 종합판정입니다. 증감률↑=양호, 노후율↑=쇠퇴로 해석했으며, 「도시재생 활성화 및 지원에 관한 특별법 시행령」상 활성화지역 지정 여부는 원본 증감률·시계열 데이터 연동 후 확정됩니다.",
     }
 
+def compute_tags(comm, grades, verdict):
+    """실데이터로 지역 특성 자동 태그를 산출. (label, tone) 리스트."""
+    tags = []
+    total = (comm or {}).get("total_stores", 0) or 0
+    if total >= 400: tags.append(["상권 밀집", "hot"])
+    elif total >= 150: tags.append(["상권 보통", "mid"])
+    elif total > 0: tags.append(["상권 희소", "cool"])
+    old_v, _ = _find_grade(grades, "노후건축물비율", "노후주택비율")
+    if old_v is not None:
+        if old_v >= 7: tags.append(["노후 주거 밀집", "warn"])
+        elif old_v <= 3: tags.append(["신축 우세", "cool"])
+    new_v, _ = _find_grade(grades, "신규주택비율")
+    if new_v is not None and new_v >= 7: tags.append(["신규 개발 활발", "good"])
+    aged_v, _ = _find_grade(grades, "노령화지수")
+    if aged_v is not None and aged_v >= 7: tags.append(["고령화 심화", "warn"])
+    if verdict:
+        pop = next((i for i in verdict["indicators"] if i["code"] == "POP"), None)
+        if pop and pop["grade"] is not None:
+            tags.append(["인구 감소 우세", "warn"] if pop["is_decline"] else ["인구 유지·증가", "good"])
+        tags.append(["쇠퇴 우려 지역", "warn"] if verdict["is_declining"] else ["정량 안정권", "good"])
+    return tags
+
 def diagnose(address, radius=500, year="2016"):
     geo = geocode.geocode(address)
     if not geo:
@@ -123,10 +148,11 @@ def diagnose(address, radius=500, year="2016"):
         by_sector.setdefault(g["sector"], []).append(
             {"name": (g["mean"] or "").replace(" 등급",""), "value": int(g["value"]) if g["value"] else None})
     verdict = compute_verdict(grades) if grades else None
+    tags = compute_tags(comm, grades, verdict)
     return {"address":address, "lat":geo["lat"], "lon":geo["lon"],
             "sigungu":geo.get("sigungu"), "emd":geo.get("emd"), "radius":radius,
             "commercial":comm, "vacancy":vac, "grades_by_sector":by_sector,
-            "diagnosis":verdict,
+            "diagnosis":verdict, "tags":tags,
             "grade_area":geo.get("sigungu"), "grade_year":year,
             "grade_count": len(grades)}
 
@@ -341,8 +367,54 @@ input#addr::placeholder{color:var(--n400)}
 
 .footer{margin-top:80px;border-top:1px solid var(--n200);padding-top:24px;font-size:12px;color:var(--n500);line-height:1.8}
 
+/* 지역 특성 태그 */
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px}
+.tag{border-radius:999px;padding:5px 11px;font-size:12px;font-weight:600;border:1px solid transparent}
+.tag.hot{background:#fef2f2;color:#b91c1c;border-color:#fecaca}
+.tag.warn{background:#fffbeb;color:#b45309;border-color:#fde68a}
+.tag.mid{background:#f5f5f5;color:#404040;border-color:#e5e5e5}
+.tag.cool{background:#f0fdfa;color:#0f766e;border-color:#ccfbf1}
+.tag.good{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
+
+/* 툴바 / PDF */
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:space-between}
+.pdfbtn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--n200);background:var(--card);border-radius:10px;padding:9px 16px;font-family:inherit;font-size:13px;font-weight:600;color:var(--n700);cursor:pointer;transition:.15s}
+.pdfbtn:hover{border-color:var(--n400);box-shadow:var(--shadow)}
+.pdfbtn.solid{background:var(--accent);color:#fff;border-color:var(--accent)}
+.pdfbtn.solid:hover{opacity:.9}
+.pdfmini{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--n200);background:var(--card);border-radius:8px;padding:5px 10px;font-family:inherit;font-size:11.5px;font-weight:600;color:var(--n600);cursor:pointer;transition:.15s}
+.pdfmini:hover{border-color:var(--n400);color:var(--fg)}
+
+/* 상권 도넛 */
+.donutwrap{display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-bottom:20px}
+.donleg{display:flex;flex-direction:column;gap:7px;flex:1;min-width:190px}
+.donleg .li{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--n700)}
+.donleg .sw{width:10px;height:10px;border-radius:3px;flex:0 0 auto}
+.donleg .lv{margin-left:auto;font-weight:600;font-variant-numeric:tabular-nums;color:var(--n600)}
+
+/* 행정 자료 링크 */
+.linkgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.linkc{display:block;border:1px solid var(--n200);border-radius:12px;padding:16px;transition:.15s;background:var(--card)}
+.linkc:hover{border-color:var(--n400);box-shadow:var(--shadow)}
+.linkc .lt{font-size:14px;font-weight:600}
+.linkc .ld{margin-top:4px;font-size:12px;color:var(--n500);line-height:1.6}
+.linkc .lg{margin-top:8px;font-size:12px;font-weight:600;color:var(--accent)}
+
+/* 인쇄(PDF) */
+@media print{
+  @page{margin:14mm}
+  .no-print{display:none !important}
+  body{background:#fff}
+  .wrap{max-width:100%;padding:0}
+  #out{gap:14px}
+  .card,.summary,.indcard,.mapcard{box-shadow:none;break-inside:avoid}
+  body.print-one #out > :not(.print-target){display:none !important}
+  body.print-one .footer{display:none !important}
+}
+
 @media(max-width:820px){
   .sec2{grid-template-columns:1fr}
+  .linkgrid{grid-template-columns:1fr}
 }
 @media(max-width:640px){
   .wrap{padding:40px 18px 72px}
@@ -353,11 +425,11 @@ input#addr::placeholder{color:var(--n400)}
 }
 </style></head><body><div class=wrap>
 
-<div class=eyebrow>City Analyzer · 도시쇠퇴 진단툴</div>
-<h1>지역을 입력하면<br><span class=g>쇠퇴 진단이 자동으로 나옵니다.</span></h1>
-<p class=lead>주소만 넣으면 대상지의 인구·사업체·노후건축물 3대 쇠퇴진단지표와 상권·빈점포를 정부 실데이터로 즉시 진단합니다. 도시재생 활성화지역 지정 가능성을 한 화면에서 확인하세요.</p>
+<div class="eyebrow no-print">City Analyzer · 도시쇠퇴 진단툴</div>
+<h1 class=no-print>지역을 입력하면<br><span class=g>쇠퇴 진단이 자동으로 나옵니다.</span></h1>
+<p class="lead no-print">주소만 넣으면 대상지의 인구·사업체·노후건축물 3대 쇠퇴진단지표와 상권·빈점포를 정부 실데이터로 즉시 진단합니다. 도시재생 활성화지역 지정 가능성을 한 화면에서 확인하세요.</p>
 
-<div class=searchwrap>
+<div class="searchwrap no-print">
   <div class=searchbar>
     <svg class=sicon width=22 height=22 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><circle cx=11 cy=11 r=8></circle><path d="m21 21-4.3-4.3"></path></svg>
     <input id=addr placeholder="주소 또는 지역을 입력하세요 — 예: 부산광역시 기장군 기장읍 동부리 487" value="부산광역시 기장군 기장읍 동부리 487" onkeydown="if(event.key==='Enter')run()">
@@ -369,12 +441,12 @@ input#addr::placeholder{color:var(--n400)}
   </div>
 </div>
 
-<div class=quick>
+<div class="quick no-print">
   <div class=qt>빠른 진입 — 사례 지역</div>
   <div class=qrow id=quick></div>
 </div>
 
-<div class=feats id=feats></div>
+<div class="feats no-print" id=feats></div>
 
 <div id=out></div>
 
@@ -405,7 +477,9 @@ const IC={
   alert:'<svg width=24 height=24 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>',
   shield:'<svg width=24 height=24 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z"></path><path d="m9 12 2 2 4-4"></path></svg>',
   check:'<svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2.5 stroke-linecap=round stroke-linejoin=round><path d="M20 6 9 17l-5-5"></path></svg>',
-  x:'<svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2.5 stroke-linecap=round stroke-linejoin=round><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>'
+  x:'<svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2.5 stroke-linecap=round stroke-linejoin=round><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>',
+  dl:'<svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1=12 y1=15 x2=12 y2=3></line></svg>',
+  ext:'<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>'
 };
 
 // 반경 선택
@@ -451,6 +525,18 @@ async function run(){
   btn.disabled=false;
 }
 
+function reset(){out.innerHTML='';window.scrollTo({top:0,behavior:'smooth'});}
+function printAll(){window.print();}
+function printOne(el){
+  if(!el)return;
+  document.body.classList.add('print-one');
+  el.classList.add('print-target');
+  const done=()=>{document.body.classList.remove('print-one');el.classList.remove('print-target');window.removeEventListener('afterprint',done);};
+  window.addEventListener('afterprint',done);
+  window.print();
+  setTimeout(done,1500);
+}
+
 function meanOf(arr){const vs=arr.map(g=>g.value).filter(v=>v!=null);
   if(!vs.length)return null;return Math.round(vs.reduce((a,c)=>a+c,0)/vs.length*10)/10;}
 
@@ -461,17 +547,41 @@ function gauge(g){ // 전국 상대등급 1~10 게이지
   return s;
 }
 
+const DCOL=['#0f172a','#0d9488','#334155','#14b8a6','#64748b','#5eead4','#94a3b8'];
+function donut(catObj,totalStores){
+  let entries=Object.entries(catObj||{}).sort((a,b)=>b[1]-a[1]);
+  if(!entries.length)return '';
+  const sumAll=entries.reduce((a,c)=>a+c[1],0)||1;
+  let top=entries.slice(0,6);
+  const rest=entries.slice(6).reduce((a,c)=>a+c[1],0);
+  if(rest>0)top=top.concat([['기타',rest]]);
+  const R=52,C=2*Math.PI*R,cx=64,cy=64,sw=22;
+  let off=0,segs='',leg='';
+  top.forEach((c,i)=>{
+    const frac=c[1]/sumAll,len=frac*C,col=DCOL[i%DCOL.length];
+    segs+='<circle cx='+cx+' cy='+cy+' r='+R+' fill=none stroke="'+col+'" stroke-width='+sw+' stroke-dasharray="'+len+' '+(C-len)+'" stroke-dashoffset="'+(-off)+'" transform="rotate(-90 '+cx+' '+cy+')"></circle>';
+    off+=len;
+    leg+='<div class=li><span class=sw style="background:'+col+'"></span>'+esc(c[0])+'<span class=lv>'+Math.round(frac*100)+'%</span></div>';
+  });
+  const center=totalStores||sumAll;
+  return '<svg width=128 height=128 viewBox="0 0 128 128" style="flex:0 0 auto">'+segs
+    +'<text x=64 y=60 text-anchor=middle font-size=22 font-weight=700 fill="#171717">'+center+'</text>'
+    +'<text x=64 y=79 text-anchor=middle font-size=10 fill="#737373">점포</text></svg>'
+    +'<div class=donleg>'+leg+'</div>';
+}
+
 function render(d){
   const dg=d.diagnosis, c=d.commercial, v=d.vacancy, secs=d.grades_by_sector||{};
   let h='';
 
-  // 뒤로(초기화)
-  h+='<div class=backrow onclick="out.innerHTML=\'\';window.scrollTo({top:0,behavior:\'smooth\'})">'+IC.back+'다른 지역 진단</div>';
+  // 툴바(뒤로 + 전체 PDF)
+  h+='<div class="toolbar no-print"><div class=backrow onclick="reset()">'+IC.back+'다른 지역 진단</div>'
+    +'<button class="pdfbtn solid" onclick="printAll()">'+IC.dl+' PDF 보고서 저장</button></div>';
 
   // 종합판정
   if(dg){
     const bad=dg.is_declining;
-    h+='<div class="summary '+(bad?'bad':'good')+'"><div class=row>'
+    h+='<section class=psec><div class="summary '+(bad?'bad':'good')+'"><div class=row>'
       +'<div class=ibox>'+(bad?IC.alert:IC.shield)+'</div>'
       +'<div class=mid><div class=rt><h2>'+esc(d.sigungu||'')+' '+esc(d.emd||'')+'</h2>'
       +'<span class=sub>기준연도 '+esc(d.grade_year)+' · <span class=live>실데이터</span> · '+esc(d.address)+'</span></div>'
@@ -480,7 +590,9 @@ function render(d){
     else{h+='<span class=vkey>정상 범위</span><span class=vsub>— 3대 지표 중 '+dg.decline_count+'개 쇠퇴 우세 (쇠퇴 기준 미달)</span>';}
     h+='</div></div>'
       +'<div class=gradebadge style="background:'+GC[dg.overall_grade]+'">종합 '+esc(dg.overall_grade)+'등급<span class=gl>'+esc(dg.overall_label)+'</span></div>'
-      +'</div></div>';
+      +'</div>';
+    if(d.tags&&d.tags.length){h+='<div class=tags>'+d.tags.map(t=>'<span class="tag '+esc(t[1])+'">'+esc(t[0])+'</span>').join('')+'</div>';}
+    h+='</div>';
 
     // 3대 지표
     h+='<div class=indgrid>';
@@ -495,6 +607,8 @@ function render(d){
         +'</div>';
     }
     h+='</div>';
+    h+='<div class="no-print" style="display:flex;justify-content:flex-end"><button class=pdfmini onclick="printOne(this.closest(\'.psec\'))">'+IC.dl+' 이 진단 PDF</button></div>';
+    h+='</section>';
   }
 
   // 지도 + 메모
@@ -510,10 +624,11 @@ function render(d){
   h+='</div></div></section>';
 
   // 상권 현황
-  h+='<div class=card><div class=chead><div class=ct2><span class=ci2>'+IC.store+'</span>상권 현황</div><span class=cn>반경 '+((d.radius||500)>=1000?((d.radius)/1000)+'km':(d.radius||500)+'m')+'</span></div>';
+  h+='<div class=card><div class=chead><div class=ct2><span class=ci2>'+IC.store+'</span>상권 현황</div><div style="display:flex;align-items:center;gap:8px"><span class=cn>반경 '+((d.radius||500)>=1000?((d.radius)/1000)+'km':(d.radius||500)+'m')+'</span><button class="pdfmini no-print" onclick="printOne(this.closest(\'.card\'))">'+IC.dl+' PDF</button></div></div>';
   const cats=Object.entries(c.by_major_category||{}).sort((a,b)=>b[1]-a[1]).slice(0,10);
   const cmax=cats.length?Math.max.apply(null,cats.map(x=>x[1])):1;
   if(cats.length){
+    h+='<div class=donutwrap>'+donut(c.by_major_category,c.total_stores)+'</div>';
     h+='<div class=stats style="margin-bottom:18px"><div class=stat><div class=sv>'+(c.total_stores||0)+'</div><div class=sk>영업 점포</div></div>'
       +'<div class=stat><div class=sv>'+cats.length+'</div><div class=sk>업종 대분류</div></div></div>';
     h+='<div class=rows>';
@@ -526,7 +641,7 @@ function render(d){
   h+='<div class=cnote>빈 점포·공실은 상가정보 API에 직접 제공되지 않아, 시점 비교(분기 스냅샷 차분)로 폐업·순증감을 추정합니다.</div></div>';
 
   // 빈점포
-  h+='<div class=card><div class=chead><div class=ct2><span class=ci2>'+IC.store+'</span>빈 점포 · 공실</div></div>';
+  h+='<div class=card><div class=chead><div class=ct2><span class=ci2>'+IC.store+'</span>빈 점포 · 공실</div><button class="pdfmini no-print" onclick="printOne(this.closest(\'.card\'))">'+IC.dl+' PDF</button></div>';
   if(v.has_prev){
     h+='<div class=cnote style="margin-top:0;margin-bottom:14px">기간 '+esc(v.t0_date)+' → '+esc(v.t1_date)+'</div>'
       +'<div class=stats><div class=stat><div class=sv>'+v.closed+'</div><div class=sk>폐업 추정</div></div>'
@@ -539,7 +654,7 @@ function render(d){
   h+='</div>';
 
   // 3부문 상세 등급
-  h+='<div class=card><div class=chead><div class=ct2><span class=ci2>'+IC.grid+'</span>쇠퇴진단 지표 상세</div><span class=cn>'+esc(d.grade_area||'')+' · '+esc(d.grade_year)+' · '+(d.grade_count||0)+'개</span></div>';
+  h+='<div class=card><div class=chead><div class=ct2><span class=ci2>'+IC.grid+'</span>쇠퇴진단 지표 상세</div><div style="display:flex;align-items:center;gap:8px"><span class=cn>'+esc(d.grade_area||'')+' · '+esc(d.grade_year)+' · '+(d.grade_count||0)+'개</span><button class="pdfmini no-print" onclick="printOne(this.closest(\'.card\'))">'+IC.dl+' PDF</button></div></div>';
   const order=['인구사회','산업경제','물리환경'];
   if(!secs||Object.keys(secs).length===0){h+='<div class=cnote>등급 데이터를 불러오지 못했습니다.</div>';}
   for(const sec of order){
@@ -553,6 +668,18 @@ function render(d){
     h+='</div></div>';
   }
   h+='<div class=disc>등급값(1~10)은 전국 대비 상대 위치입니다. 지표별로 높음/낮음의 의미가 달라, 종합판정은 증감률↑=양호·노후율↑=쇠퇴 해석을 적용한 잠정치이며 공식 범례 확정 후 보강합니다.</div></div>';
+
+  // 현장·행정 자료 딥링크
+  const eu='https://www.eum.go.kr/web/ar/lu/luLandDet.jsp';
+  const vw='https://map.vworld.kr/map/maps.do#'+d.lat+','+d.lon+',18';
+  const kk='https://map.kakao.com/link/roadview/'+d.lat+','+d.lon;
+  const nv='https://map.naver.com/p?c='+d.lon+','+d.lat+',18,0,0,0,dh';
+  h+='<div class=card><div class=chead><div class=ct2><span class=ci2>'+IC.map+'</span>현장·행정 자료</div><span class=cn>대상지 좌표 연동</span></div>'
+    +'<div class=linkgrid>'
+    +'<a class=linkc target=_blank rel=noopener href="'+eu+'"><div class=lt>토지이음</div><div class=ld>토지이용계획·지역지구·행위제한 확인 (주소 검색)</div><div class=lg>바로가기 '+IC.ext+'</div></a>'
+    +'<a class=linkc target=_blank rel=noopener href="'+vw+'"><div class=lt>브이월드 지도</div><div class=ld>지적도·항공영상·3D·건물정보 열람</div><div class=lg>대상지 열기 '+IC.ext+'</div></a>'
+    +'<a class=linkc target=_blank rel=noopener href="'+kk+'"><div class=lt>카카오 로드뷰</div><div class=ld>현장 로드뷰·거리 이미지 (네이버 지도도 지원)</div><div class=lg>로드뷰 열기 '+IC.ext+'</div></a>'
+    +'</div><div class=cnote>토지이음은 좌표 직접 이동을 지원하지 않아 주소로 검색하세요. 브이월드·로드뷰는 대상지 좌표로 바로 이동합니다.</div></div>';
 
   out.innerHTML=h;
 
