@@ -56,12 +56,13 @@ def _band_old(g):
     return ("E", GRADE_LABEL["E"], True)
 
 def _band_real_decline(v, thr):
-    """실측 변화율(%). 감소=음수. thr=법정 감소기준(양수). 감소가 thr 이상이면 법정 충족."""
+    """실측 기간 변화율(%). 음수=감소 추세 신호. 단일 값이라 법정 30년/10년 누적기준은 판정 불가 → 방향(감소) 신호로만 표시."""
     if v is None: return ("–", GRADE_LABEL["–"], False)
-    if v <= -thr: return ("E", "쇠퇴 심각", True)
-    if v < 0: return ("C", "감소 추세", False)
-    if v >= thr: return ("A", "양호", False)
-    return ("B", "주의", False)
+    if v <= -5: return ("E", "감소 뚜렷", True)
+    if v <= -1: return ("D", "감소 추세", True)
+    if v < 0: return ("C", "소폭 감소", True)
+    if v < 1: return ("B", "보합", False)
+    return ("A", "증가", False)
 
 def _band_real_old(v):
     """실측 노후건축물 비율(%). 50% 이상이면 법정 충족."""
@@ -78,14 +79,16 @@ def _mk(code, label, direction, real, grade_v, grade_name, real_keys, grade_defa
     if rv is not None:
         if direction == "old":
             letter, status, dec = _band_real_old(rv)
-            crit = f"실측 노후건축물 비율 {round(rv,1)}%. 법정 기준: 준공 20년 이상 건축물 50% 이상이면 충족."
+            crit = f"준공 20년 이상 노후건축물 비율 {round(rv,1)}%. 법정 기준 50% 이상이면 쇠퇴 충족(직접 판정 가능)."
+            vlabel = "법정 충족" if dec else "법정 미충족"
         else:
             thr = DC["population_drop_pct"] if code == "POP" else DC["business_drop_pct"]
             letter, status, dec = _band_real_decline(rv, thr)
-            crit = f"실측 변화율 {round(rv,1)}%. 법정 기준: {thr}% 이상 감소 시 충족(음수=감소)."
+            crit = f"실측 기간 변화율 {round(rv,1)}%(음수=감소). 법정 쇠퇴(최근 30년·10년 최대 대비 감소)는 지표 시계열 연동 시 확정."
+            vlabel = "감소 추세" if dec else "증가·유지"
         unit = runit or "%"
         return {"code":code, "label":label, "source_name":rname or grade_default,
-                "mode":"실측", "display_value":round(rv,1), "display_unit":unit,
+                "mode":"실측", "verdict_label":vlabel, "display_value":round(rv,1), "display_unit":unit,
                 "grade":grade_v, "letter":letter, "status":status, "is_decline":dec,
                 "direction":direction, "criterion":crit}
     # 폴백: 등급기반
@@ -126,7 +129,7 @@ def compute_verdict(grades, real=None):
         overall = "A" if all(l == "A" for l in letters if l != "–") and "–" not in letters else "B"
     real_used = any(i["mode"] == "실측" for i in indicators)
     if real_used:
-        note = "쇠퇴진단 실측지표(인구·사업체·노후건축물) 기반 판정입니다. 「도시재생 활성화 및 지원에 관한 특별법 시행령」상 3대 지표 중 2개 이상 충족 시 활성화지역 지정 검토 대상입니다."
+        note = "쇠퇴진단 실측지표 기반. 노후건축물비율은 법정 50% 기준으로 직접 판정하고, 인구·사업체는 실측 기간 변화율의 감소 방향을 쇠퇴 신호로 표시했습니다. 법정 쇠퇴지역(최근 30년·10년 최대 대비 누적 감소) 최종 확정은 지표 시계열 원본 연동이 필요합니다."
     else:
         note = "전국 상대등급(1~10) 기반 잠정 종합판정입니다. 증감률↑=양호, 노후율↑=쇠퇴로 해석했으며, 법정 활성화지역 지정 여부는 원본 증감률 데이터 연동 후 확정됩니다."
     return {
@@ -663,8 +666,8 @@ function render(d){
       +'<div class=mid><div class=rt><h2>'+esc(d.sigungu||'')+' '+esc(d.emd||'')+'</h2>'
       +'<span class=sub>기준연도 '+esc(d.grade_year)+' · <span class=live>실데이터</span> · '+esc(d.address)+'</span></div>'
       +'<div class=verdict>';
-    if(bad){h+='<span class=vkey>쇠퇴지역 진단</span><span class=vsub>— 3대 지표 중 <strong>'+dg.decline_count+'개</strong> '+(dg.real_used?'충족 (활성화지역 지정 가능)':'쇠퇴 우세 (잠정 · 활성화지역 검토)')+'</span>';}
-    else{h+='<span class=vkey>정상 범위</span><span class=vsub>— 3대 지표 중 '+dg.decline_count+'개 '+(dg.real_used?'충족':'쇠퇴 우세')+' (쇠퇴 기준 미달)</span>';}
+    if(bad){h+='<span class=vkey>쇠퇴지역 진단</span><span class=vsub>— 3대 지표 중 <strong>'+dg.decline_count+'개</strong> '+(dg.real_used?'쇠퇴 신호 (활성화지역 검토 대상)':'쇠퇴 우세 (잠정 · 활성화지역 검토)')+'</span>';}
+    else{h+='<span class=vkey>정상 범위</span><span class=vsub>— 3대 지표 중 '+dg.decline_count+'개 '+(dg.real_used?'쇠퇴 신호':'쇠퇴 우세')+' (쇠퇴 기준 미달)</span>';}
     h+='</div></div>'
       +'<div class=gradebadge style="background:'+GC[dg.overall_grade]+'">종합 '+esc(dg.overall_grade)+'등급<span class=gl>'+esc(dg.overall_label)+'</span></div>'
       +'</div>';
@@ -676,7 +679,7 @@ function render(d){
     for(const ind of dg.indicators){
       const dec=ind.is_decline, real=(ind.mode==='실측');
       const dv=(ind.display_value==null?'–':ind.display_value), du=(ind.display_unit||'');
-      const ctLabel = real ? (dec?'쇠퇴 기준 충족':'쇠퇴 기준 미충족') : (dec?'쇠퇴 우세(잠정)':'양호 우세(잠정)');
+      const ctLabel = real ? (ind.verdict_label || (dec?'쇠퇴 신호':'양호')) : (dec?'쇠퇴 우세(잠정)':'양호 우세(잠정)');
       h+='<div class=indcard><div class=ih><div><div class=il>'+esc(ind.label)+'</div><div class=iy title="'+esc(ind.source_name)+'">기준 '+esc(d.grade_year)+'년 · '+esc(ind.source_name)+'</div></div>'
         +'<span class=pill style="background:'+GC[ind.letter]+'">'+esc(ind.letter)+' · '+esc(ind.status)+'</span></div>'
         +'<div class=big><span class=bigv>'+dv+'</span><span class=bigu>'+esc(du)+'</span></div>'
