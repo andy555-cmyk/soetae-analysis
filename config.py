@@ -12,6 +12,9 @@ SBIZ_SERVICE_KEY = os.getenv("SBIZ_SERVICE_KEY", "")
 VWORLD_KEY = os.getenv("VWORLD_KEY", "")
 KAKAO_REST_KEY = os.getenv("KAKAO_REST_KEY", "")
 
+# 2-1) 카카오맵 JavaScript 키 (프런트엔드 인라인 로드뷰용, 도메인 등록 필요)
+KAKAO_JS_KEY = os.getenv("KAKAO_JS_KEY", "")
+
 # 3) (선택) 쇠퇴진단지표 CSV 경로 - 도시재생 개방데이터 다운로드본
 DECLINE_CSV_PATH = os.getenv("DECLINE_CSV_PATH", "data/rurban_decline_index.csv")
 
