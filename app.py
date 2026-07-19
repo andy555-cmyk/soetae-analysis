@@ -248,13 +248,14 @@ def config_get(k):
 def api_diagnose():
     addr = request.args.get("address","").strip()
     radius = int(request.args.get("radius", 500))
+    year = request.args.get("year", "2016")
     lat = request.args.get("lat"); lon = request.args.get("lon")
     try:
         if lat and lon:  # 지도 클릭 지점
-            return jsonify(diagnose(radius=radius, latlon=(float(lat), float(lon))))
+            return jsonify(diagnose(radius=radius, latlon=(float(lat), float(lon)), year=year))
         if not addr:
             return jsonify({"error":"주소를 입력하세요."})
-        return jsonify(diagnose(addr, radius))
+        return jsonify(diagnose(addr, radius, year))
     except Exception as e:
         return jsonify({"error": f"오류: {e}"})
 
