@@ -161,7 +161,7 @@ def compute_tags(comm, grades, verdict):
         tags.append(["쇠퇴 우려 지역", "warn"] if verdict["is_declining"] else ["정량 안정권", "good"])
     return tags
 
-def diagnose(address=None, radius=500, year="2016", latlon=None):
+def diagnose(address=None, radius=500, year="2022", latlon=None):
     if latlon:  # 지도 클릭 지점 진단(역지오코딩)
         geo = geocode.reverse_geocode(latlon[0], latlon[1])
         if not geo:
@@ -248,7 +248,7 @@ def config_get(k):
 def api_diagnose():
     addr = request.args.get("address","").strip()
     radius = int(request.args.get("radius", 500))
-    year = request.args.get("year", "2016")
+    year = request.args.get("year", "2022")
     lat = request.args.get("lat"); lon = request.args.get("lon")
     try:
         if lat and lon:  # 지도 클릭 지점
