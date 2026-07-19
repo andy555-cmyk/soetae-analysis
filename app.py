@@ -244,6 +244,37 @@ def config_get(k):
     import config
     return getattr(config, k, "")
 
+@app.route("/debug/bld")
+def debug_bld():
+    import requests as _rq
+    addr = request.args.get("address", "부산광역시 기장군 기장읍 동부리 487")
+    geo = geocode.geocode(addr) or {}
+    ld = geo.get("ldongCd")
+    out = {"address": addr, "ldongCd": ld, "geo_source": geo.get("source"),
+           "sido": geo.get("sido"), "sigungu": geo.get("sigungu"), "emd": geo.get("emd")}
+    if not ld or len(str(ld)) < 10:
+        out["problem"] = "no_ldongCd"
+        return jsonify(out)
+    lc = str(ld); sigungu, bjdong = lc[:5], lc[5:10]
+    bun, ji, plat = building._parse_bun_ji(addr)
+    out.update({"sigunguCd": sigungu, "bjdongCd": bjdong, "bun": bun, "ji": ji, "platGbCd": plat})
+    cands = [
+        ("https://apis.data.go.kr/1613000/BldRgstHubService", "getBrTitleInfo"),
+        ("https://apis.data.go.kr/1613000/BldRgstHubService", "getBrBasisOulnInfo"),
+        ("https://apis.data.go.kr/1613000/BldRgstHubService", "getBrRecapTitleInfo"),
+    ]
+    out["tries"] = []
+    for base, op in cands:
+        try:
+            r = _rq.get(base + "/" + op, params={"serviceKey": config_get("SBIZ_SERVICE_KEY"),
+                "sigunguCd": sigungu, "bjdongCd": bjdong, "platGbCd": plat, "bun": bun, "ji": ji,
+                "numOfRows": 5, "pageNo": 1, "_type": "json"}, timeout=8)
+            out["tries"].append({"op": op, "http": r.status_code, "body": r.text[:1000]})
+        except Exception as e:
+            out["tries"].append({"op": op, "err": str(e)[:200]})
+    return jsonify(out)
+
+
 @app.route("/api/diagnose")
 def api_diagnose():
     addr = request.args.get("address","").strip()
