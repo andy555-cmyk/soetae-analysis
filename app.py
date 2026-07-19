@@ -78,14 +78,14 @@ def _mk(code, label, direction, real, grade_v, grade_name, real_keys, grade_defa
     if rv is not None:
         if direction == "old":
             letter, status, dec = _band_real_old(rv)
-            crit = f"실측 노후건축물 비율 {rv}%. 법정 기준: 준공 20년 이상 건축물 50% 이상이면 충족."
+            crit = f"실측 노후건축물 비율 {round(rv,1)}%. 법정 기준: 준공 20년 이상 건축물 50% 이상이면 충족."
         else:
             thr = DC["population_drop_pct"] if code == "POP" else DC["business_drop_pct"]
             letter, status, dec = _band_real_decline(rv, thr)
-            crit = f"실측 변화율 {rv}%. 법정 기준: {thr}% 이상 감소 시 충족(음수=감소)."
+            crit = f"실측 변화율 {round(rv,1)}%. 법정 기준: {thr}% 이상 감소 시 충족(음수=감소)."
         unit = runit or "%"
         return {"code":code, "label":label, "source_name":rname or grade_default,
-                "mode":"실측", "display_value":rv, "display_unit":unit,
+                "mode":"실측", "display_value":round(rv,1), "display_unit":unit,
                 "grade":grade_v, "letter":letter, "status":status, "is_decline":dec,
                 "direction":direction, "criterion":crit}
     # 폴백: 등급기반
