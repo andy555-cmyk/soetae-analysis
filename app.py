@@ -189,19 +189,23 @@ def diagnose(address=None, radius=500, year="2023", latlon=None):
         vacancy.save(cur, snap_path)
         vac = {"has_prev":False, "base_date":cur["date"], "base_count":cur["count"]}
     signgu = _signgu_from_geo(geo)
-    grades = []
+    grades = []; idx_vals = []
     if signgu:
-        ck = f"{signgu}_{year}"
-        if ck not in _GRADE_CACHE:
-            _GRADE_CACHE[ck] = decline_grade.sigungu_indicators(signgu, year)
-        grades = _GRADE_CACHE[ck]
-    idx_vals = []
-    if signgu:
-        ick = f"idx_{signgu}_{year}"
-        if ick not in _IDX_CACHE:
-            try: _IDX_CACHE[ick] = decline_idx.sigungu_values(signgu, year)
-            except Exception: _IDX_CACHE[ick] = []
-        idx_vals = _IDX_CACHE[ick]
+        ck = f"{signgu}_{year}"; ick = f"idx_{signgu}_{year}"
+        need_g = ck not in _GRADE_CACHE; need_i = ick not in _IDX_CACHE
+        if need_g or need_i:
+            # 등급·실측 두 조회를 동시 실행(신규 시군구 첫 조회 지연 절반으로)
+            from concurrent.futures import ThreadPoolExecutor as _TPE
+            with _TPE(max_workers=2) as _ex:
+                _fg = _ex.submit(decline_grade.sigungu_indicators, signgu, year) if need_g else None
+                _fi = _ex.submit(decline_idx.sigungu_values, signgu, year) if need_i else None
+                if _fg is not None:
+                    try: _GRADE_CACHE[ck] = _fg.result()
+                    except Exception: _GRADE_CACHE[ck] = []
+                if _fi is not None:
+                    try: _IDX_CACHE[ick] = _fi.result()
+                    except Exception: _IDX_CACHE[ick] = []
+        grades = _GRADE_CACHE.get(ck, []); idx_vals = _IDX_CACHE.get(ick, [])
     gonga = next((int(g["value"]) for g in grades if "공가율" in (g["mean"] or "")), None)
     vac["gonga"] = gonga
     by_sector = {}
