@@ -161,7 +161,7 @@ def compute_tags(comm, grades, verdict):
         tags.append(["쇠퇴 우려 지역", "warn"] if verdict["is_declining"] else ["정량 안정권", "good"])
     return tags
 
-def diagnose(address=None, radius=500, year="2022", latlon=None):
+def diagnose(address=None, radius=500, year="2023", latlon=None):
     if latlon:  # 지도 클릭 지점 진단(역지오코딩)
         geo = geocode.reverse_geocode(latlon[0], latlon[1])
         if not geo:
@@ -248,7 +248,7 @@ def config_get(k):
 def api_diagnose():
     addr = request.args.get("address","").strip()
     radius = int(request.args.get("radius", 500))
-    year = request.args.get("year", "2022")
+    year = request.args.get("year", "2023")
     lat = request.args.get("lat"); lon = request.args.get("lon")
     try:
         if lat and lon:  # 지도 클릭 지점
@@ -501,7 +501,7 @@ input#addr::placeholder{color:var(--n400)}
 <div class="searchwrap no-print">
   <div class=searchbar>
     <svg class=sicon width=22 height=22 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><circle cx=11 cy=11 r=8></circle><path d="m21 21-4.3-4.3"></path></svg>
-    <input id=addr placeholder="주소 또는 지역을 입력하세요 — 예: 부산광역시 기장군 기장읍 동부리 487" value="부산광역시 기장군 기장읍 동부리 487" onkeydown="if(event.key==='Enter')run()">
+    <input id=addr placeholder="주소 또는 지역을 입력하세요 — 예: 부산광역시 기장군 기장읍 대라리 100" value="부산광역시 기장군 기장읍 대라리 100" onkeydown="if(event.key==='Enter')run()">
     <button id=go class=gobtn onclick=run()>진단</button>
   </div>
   <div class=searchmeta>
@@ -560,7 +560,7 @@ function setRadius(r){RADIUS=r;document.querySelectorAll('#radio button').forEac
 
 // 사례지역
 const SAMPLES=[
-  {a:'부산광역시 기장군 기장읍 동부리 487', n:'기장읍 동부리487', s:'부산 기장군'},
+  {a:'부산광역시 기장군 기장읍 대라리 100', n:'기장읍 대라리100', s:'부산 기장군'},
   {a:'부산광역시 해운대구 우동', n:'우동', s:'부산 해운대구'},
   {a:'경상남도 산청군 산청읍', n:'산청읍', s:'경남 산청군'},
   {a:'경상남도 합천군 합천읍', n:'합천읍', s:'경남 합천군'}
