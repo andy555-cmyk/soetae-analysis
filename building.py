@@ -7,7 +7,6 @@ import re, time, requests, config
 
 BASES = [
     "https://apis.data.go.kr/1613000/BldRgstHubService",
-    "https://apis.data.go.kr/1613000/BldRgstHubService_v2",
     "https://apis.data.go.kr/1613000/BldRgstService_v2",
 ]
 
@@ -63,20 +62,19 @@ def title_info(ldong_cd, address):
     params = {"serviceKey": config.SBIZ_SERVICE_KEY, "sigunguCd": sigungu, "bjdongCd": bjdong,
               "platGbCd": plat, "bun": bun, "ji": ji, "numOfRows": 30, "pageNo": 1, "_type": "json"}
     s = requests.Session()
+    # 진단 응답을 막지 않도록 빠르게 실패(짧은 타임아웃·단일 시도). 실패 시 딥링크로 폴백.
     for base in BASES:
-        for i in range(2):
-            try:
-                r = s.get(f"{base}/getBrTitleInfo", params=params, timeout=15)
-                j = r.json()
-                body = ((j.get("response") or {}).get("body") or {})
-                items = body.get("items") or {}
-                item = items.get("item") if isinstance(items, dict) else None
-                if isinstance(item, list):
-                    # 대표 동: 연면적 최대 동을 대표로
-                    item = max(item, key=lambda x: _num(x.get("totArea")) or 0) if item else None
-                if item:
-                    return _pick(item)
-                break  # 정상 응답이나 항목 없음 → 다음 base 불필요
-            except Exception:
-                time.sleep(0.5 * (i + 1))
+        try:
+            r = s.get(f"{base}/getBrTitleInfo", params=params, timeout=6)
+            j = r.json()
+            body = ((j.get("response") or {}).get("body") or {})
+            items = body.get("items") or {}
+            item = items.get("item") if isinstance(items, dict) else None
+            if isinstance(item, list):
+                # 대표 동: 연면적 최대 동을 대표로
+                item = max(item, key=lambda x: _num(x.get("totArea")) or 0) if item else None
+            if item:
+                return _pick(item)
+        except Exception:
+            continue  # 이 base 실패 → 다음 후보로 즉시 이동(재시도 없음)
     return None
