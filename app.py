@@ -382,6 +382,19 @@ input#addr::placeholder{color:var(--n400)}
 .critbox .ct{font-weight:600}
 .critbox.bad .ct{color:var(--red700)} .critbox.good .ct{color:var(--em700)}
 .critbox .cd{margin:2px 0 0;line-height:1.6;color:var(--n600)}
+.meter{margin-top:14px}
+.mtrack{position:relative;height:12px;background:var(--n100);border-radius:99px;overflow:hidden}
+.mfill{position:absolute;top:0;bottom:0;left:0;border-radius:99px}
+.mthr{position:absolute;top:0;bottom:0;width:2px;background:var(--n700);z-index:2}
+.mzero{position:absolute;top:0;bottom:0;left:50%;width:2px;background:var(--n400);z-index:2;transform:translateX(-1px)}
+.mdiv{position:absolute;top:0;bottom:0;border-radius:99px}
+.mcap{display:flex;justify-content:space-between;margin-top:6px;font-size:10.5px;color:var(--n400)}
+.mcap .mthrlab{color:var(--n600);font-weight:600}
+.sigstrip{display:flex;gap:10px;margin:0 0 16px}
+.sigchip{flex:1;display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--n200);border-radius:12px;padding:11px 14px;font-size:13px;box-shadow:var(--shadow)}
+.sigchip .sdot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.sigchip .slab{font-weight:500;color:var(--n700)}
+.sigchip .sval{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums}
 /* 전국 상대등급 게이지 */
 .gauge{margin-top:20px}
 .gauge .gl2{display:flex;justify-content:space-between;font-size:11px;color:var(--n400);margin-bottom:6px}
@@ -646,6 +659,17 @@ function donut(catObj,totalStores){
     +'<div class=donleg>'+leg+'</div>';
 }
 
+function meter(ind){
+  if(ind.mode!=='실측' || ind.display_value==null) return '';
+  var v=ind.display_value, dec=ind.is_decline;
+  if(ind.direction==='old'){
+    var pos=Math.max(0,Math.min(100,v)), col=dec?'var(--gE)':'var(--gA)';
+    return '<div class=meter><div class=mtrack><div class=mfill style="width:'+pos+'%;background:'+col+'"></div><div class=mthr style="left:50%"></div></div><div class=mcap><span>0%</span><span class=mthrlab>법정 50%</span><span>100%</span></div></div>';
+  }
+  var cl=Math.max(-10,Math.min(10,v)), p=50+cl/10*50, left=Math.min(50,p), w=Math.abs(p-50), col2=v<0?'var(--gD)':'var(--gA)';
+  return '<div class=meter><div class=mtrack><div class=mzero></div><div class=mdiv style="left:'+left+'%;width:'+w+'%;background:'+col2+'"></div></div><div class=mcap><span>감소</span><span class=mthrlab>0%</span><span>증가</span></div></div>';
+}
+
 function render(d){
   const dg=d.diagnosis, c=d.commercial, v=d.vacancy, secs=d.grades_by_sector||{};
   let h='';
@@ -679,6 +703,7 @@ function render(d){
     h+='</div>';
 
     // 3대 지표
+    h+='<div class=sigstrip>'+dg.indicators.map(function(si){var sd=si.is_decline;return '<div class=sigchip><span class=sdot style="background:'+(sd?'var(--gE)':'var(--gA)')+'"></span><span class=slab>'+esc(si.label)+'</span><b class=sval>'+(si.display_value==null?'–':si.display_value)+esc(si.display_unit||'')+'</b></div>';}).join('')+'</div>';
     h+='<div class=indgrid>';
     for(const ind of dg.indicators){
       const dec=ind.is_decline, real=(ind.mode==='실측');
@@ -686,7 +711,7 @@ function render(d){
       const ctLabel = real ? (ind.verdict_label || (dec?'쇠퇴 신호':'양호')) : (dec?'쇠퇴 우세(잠정)':'양호 우세(잠정)');
       h+='<div class=indcard><div class=ih><div><div class=il>'+esc(ind.label)+'</div><div class=iy title="'+esc(ind.source_name)+'">기준 '+esc(d.grade_year)+'년 · '+esc(ind.source_name)+'</div></div>'
         +'<span class=pill style="background:'+GC[ind.letter]+'">'+esc(ind.letter)+' · '+esc(ind.status)+'</span></div>'
-        +'<div class=big><span class=bigv>'+dv+'</span><span class=bigu>'+esc(du)+'</span></div>'
+        +'<div class=big><span class=bigv>'+dv+'</span><span class=bigu>'+esc(du)+'</span></div>'+meter(ind)
         +'<div class="critbox '+(dec?'bad':'good')+'"><span class=ci style="color:'+(dec?'var(--red600)':'var(--em600)')+'">'+(dec?IC.check:IC.x)+'</span>'
         +'<div><div class=ct>'+ctLabel+'</div><div class=cd>'+esc(ind.criterion)+'</div></div></div>'
         +(real?'<div class=srcnote>'+IC.check.replace(/width=16 height=16/,'width=13 height=13')+' 쇠퇴진단 실측지표 기반</div>':gauge(ind.grade))
