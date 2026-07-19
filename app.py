@@ -663,8 +663,8 @@ function render(d){
       +'<div class=mid><div class=rt><h2>'+esc(d.sigungu||'')+' '+esc(d.emd||'')+'</h2>'
       +'<span class=sub>기준연도 '+esc(d.grade_year)+' · <span class=live>실데이터</span> · '+esc(d.address)+'</span></div>'
       +'<div class=verdict>';
-    if(bad){h+='<span class=vkey>쇠퇴 신호 감지</span><span class=vsub>— 3대 지표 중 <strong>'+dg.decline_count+'개</strong> 쇠퇴 우세 (활성화지역 검토 대상)</span>';}
-    else{h+='<span class=vkey>정상 범위</span><span class=vsub>— 3대 지표 중 '+dg.decline_count+'개 쇠퇴 우세 (쇠퇴 기준 미달)</span>';}
+    if(bad){h+='<span class=vkey>쇠퇴지역 진단</span><span class=vsub>— 3대 지표 중 <strong>'+dg.decline_count+'개</strong> '+(dg.real_used?'충족 (활성화지역 지정 가능)':'쇠퇴 우세 (잠정 · 활성화지역 검토)')+'</span>';}
+    else{h+='<span class=vkey>정상 범위</span><span class=vsub>— 3대 지표 중 '+dg.decline_count+'개 '+(dg.real_used?'충족':'쇠퇴 우세')+' (쇠퇴 기준 미달)</span>';}
     h+='</div></div>'
       +'<div class=gradebadge style="background:'+GC[dg.overall_grade]+'">종합 '+esc(dg.overall_grade)+'등급<span class=gl>'+esc(dg.overall_label)+'</span></div>'
       +'</div>';
@@ -676,8 +676,8 @@ function render(d){
     for(const ind of dg.indicators){
       const dec=ind.is_decline, real=(ind.mode==='실측');
       const dv=(ind.display_value==null?'–':ind.display_value), du=(ind.display_unit||'');
-      const ctLabel = real ? (dec?'법정 기준 충족':'법정 기준 미충족') : (dec?'쇠퇴 우세':'양호 우세');
-      h+='<div class=indcard><div class=ih><div><div class=il>'+esc(ind.label)+'</div><div class=iy title="'+esc(ind.source_name)+'">'+esc(ind.source_name)+'</div></div>'
+      const ctLabel = real ? (dec?'쇠퇴 기준 충족':'쇠퇴 기준 미충족') : (dec?'쇠퇴 우세(잠정)':'양호 우세(잠정)');
+      h+='<div class=indcard><div class=ih><div><div class=il>'+esc(ind.label)+'</div><div class=iy title="'+esc(ind.source_name)+'">기준 '+esc(d.grade_year)+'년 · '+esc(ind.source_name)+'</div></div>'
         +'<span class=pill style="background:'+GC[ind.letter]+'">'+esc(ind.letter)+' · '+esc(ind.status)+'</span></div>'
         +'<div class=big><span class=bigv>'+dv+'</span><span class=bigu>'+esc(du)+'</span></div>'
         +'<div class="critbox '+(dec?'bad':'good')+'"><span class=ci style="color:'+(dec?'var(--red600)':'var(--em600)')+'">'+(dec?IC.check:IC.x)+'</span>'
