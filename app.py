@@ -219,6 +219,29 @@ def diagnose(address=None, radius=500, year="2023", latlon=None):
             "grade_area":geo.get("sigungu"), "grade_year":year,
             "grade_count": len(grades)}
 
+@app.route("/debug/idx")
+def debug_idx():
+    import requests as _rq
+    signgu = request.args.get("signgu", "26710")
+    year = request.args.get("year", "2023")
+    out = {"signgu": signgu, "year": year, "bases": []}
+    for base in decline_idx.BASES:
+        e = {"base": base}
+        try:
+            r = _rq.get(base + "/getIdxSigngu", params={"serviceKey": config.SBIZ_SERVICE_KEY, "signguCd": signgu, "idxCd": "VALUE00001", "year": year, "type": "json", "numOfRows": 3, "pageNo": 1}, timeout=15)
+            e["http"] = r.status_code
+            e["body"] = r.text[:600]
+        except Exception as ex:
+            e["error"] = str(ex)[:200]
+        out["bases"].append(e)
+    try:
+        vals = decline_idx.sigungu_values(signgu, year)
+        out["values_count"] = len(vals)
+        out["values"] = vals[:60]
+    except Exception as ex:
+        out["values_error"] = str(ex)[:200]
+    return out
+
 @app.route("/health")
 def health():
     import requests as _rq
