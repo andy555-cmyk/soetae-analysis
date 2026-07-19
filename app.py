@@ -9,7 +9,7 @@ Noto Sans KR + 뉴트럴/슬레이트 팔레트 + 종합판정 카드(빨강/초
 등급 방향은 전국 상대등급 해석(증감률↑=양호, 노후율↑=쇠퇴)을 적용하고 화면에 명시(잠정)."""
 import os
 from flask import Flask, request, jsonify
-import geocode, commercial, decline_grade, decline_idx, vacancy, config
+import geocode, commercial, decline_grade, decline_idx, vacancy, building, config
 
 app = Flask(__name__)
 _GRADE_CACHE = {}   # 시군구+연도 쇠퇴등급 캐시(정적)
@@ -208,10 +208,14 @@ def diagnose(address=None, radius=500, year="2016", latlon=None):
     verdict = compute_verdict(grades, idx_vals) if (grades or idx_vals) else None
     tags = compute_tags(comm, grades, verdict)
     no_grade = (bool(signgu) and not grades)  # 시군구는 잡혔으나 등급 데이터 미제공(예: 울산 일부)
+    try:
+        bld = building.title_info(geo.get("ldongCd"), address)  # 건축물대장 표제부(노후연수 등)
+    except Exception:
+        bld = None
     return {"address":address, "lat":geo["lat"], "lon":geo["lon"],
             "sigungu":geo.get("sigungu"), "emd":geo.get("emd"), "radius":radius,
             "commercial":comm, "vacancy":vac, "grades_by_sector":by_sector,
-            "diagnosis":verdict, "tags":tags, "no_grade":no_grade,
+            "diagnosis":verdict, "tags":tags, "no_grade":no_grade, "building":bld,
             "grade_area":geo.get("sigungu"), "grade_year":year,
             "grade_count": len(grades)}
 
@@ -256,8 +260,8 @@ def api_diagnose():
 
 @app.route("/")
 def index():
-    # PAGE에는 Jinja 문법이 없으므로 그대로 반환(브레이스 충돌 방지)
-    return PAGE
+    # PAGE에는 Jinja 문법이 없으므로 문자열 치환만 사용(브레이스 충돌 방지)
+    return PAGE.replace("__KAKAO_JS_KEY__", config.KAKAO_JS_KEY or "")
 
 PAGE = r"""<!doctype html><html lang=ko><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
@@ -267,6 +271,7 @@ PAGE = r"""<!doctype html><html lang=ko><head><meta charset=utf-8>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=__KAKAO_JS_KEY__&autoload=false"></script>
 <style>
 :root{
   --bg:#fafafa; --fg:#0a0a0a; --card:#ffffff;
@@ -685,7 +690,9 @@ function render(d){
   }
 
   // 지도 + 메모
-  h+='<section class=sec2><div><div class=h3>지역 위치 <span style="font-weight:400;color:var(--n400);font-size:12px">· 지도 클릭 = 그 지점 재진단 · 우측 상단에서 위성 전환</span></div><div class=mapcard><div id=map></div></div></div>'
+  h+='<section class=sec2><div><div class=h3>지역 위치 <span style="font-weight:400;color:var(--n400);font-size:12px">· 지도 클릭 = 그 지점 재진단 · 우측 상단에서 위성 전환</span></div><div class=mapcard><div id=map></div></div>'
+    +'<div class=h3 style="margin-top:16px">현장 로드뷰 <span style="font-weight:400;color:var(--n400);font-size:12px">· 대상지 좌표 자동 삽입</span></div>'
+    +'<div class=mapcard><div id=road style="height:280px;border-radius:12px;overflow:hidden;background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:var(--n400);font-size:13px">로드뷰 불러오는 중…</div></div></div>'
     +'<div><div class=h3>진단 요약 메모</div><div class="card memo">';
   if(dg){
     h+='<p><strong>'+esc(d.sigungu||'')+'</strong> 일대는 '+esc(d.grade_year)+'년 기준 3대 쇠퇴진단지표 중 '
@@ -742,6 +749,27 @@ function render(d){
   }
   h+='<div class=disc>등급값(1~10)은 전국 대비 상대 위치입니다. 지표별로 높음/낮음의 의미가 달라, 종합판정은 증감률↑=양호·노후율↑=쇠퇴 해석을 적용한 잠정치이며 공식 범례 확정 후 보강합니다.</div></div>';
 
+  // 건축물대장 표제부(자동 연동)
+  const bd=d.building;
+  if(bd){
+    const cy=new Date().getFullYear();
+    const age=(bd.approved_year? cy-bd.approved_year : null);
+    const old=(age!=null && age>=30);
+    h+='<div class=card><div class=chead><div class=ct2><span class=ci2>'+IC.grid+'</span>건축물대장 · 표제부</div><span class=cn>대상지 자동 연동</span></div>';
+    h+='<div class=stats>'
+      +'<div class=stat><div class=sv>'+(bd.approved_year||'–')+'</div><div class=sk>사용승인</div></div>'
+      +'<div class=stat><div class="sv '+(old?'bad':'')+'">'+(age!=null?age+'년':'–')+'</div><div class=sk>노후연수</div></div>'
+      +'<div class=stat><div class=sv>'+(bd.floors_up!=null?bd.floors_up+'F':'–')+'</div><div class=sk>지상층수</div></div></div>';
+    h+='<div class=rows>'
+      +'<div class=row><div class=rn>주용도</div><div style="margin-left:auto;font-weight:500;font-size:13px">'+esc(bd.purpose||'–')+'</div></div>'
+      +'<div class=row><div class=rn>주구조</div><div style="margin-left:auto;font-weight:500;font-size:13px">'+esc(bd.structure||'–')+'</div></div>'
+      +'<div class=row><div class=rn>건폐율 / 용적률</div><div style="margin-left:auto;font-weight:500;font-size:13px">'+(bd.bc_rat!=null?bd.bc_rat+'%':'–')+' / '+(bd.vl_rat!=null?bd.vl_rat+'%':'–')+'</div></div>'
+      +'<div class=row><div class=rn>연면적</div><div style="margin-left:auto;font-weight:500;font-size:13px">'+(bd.tot_area!=null?bd.tot_area.toLocaleString()+' ㎡':'–')+'</div></div>'
+      +'</div>';
+    if(old)h+='<div class=badge style="margin-top:12px;background:#fef2f2;color:#b91c1c">노후건축물(30년↑) — 법정 노후건축물 비율 기준 관련</div>';
+    h+='<div class=cnote>국토교통부 건축HUB 건축물대장 표제부 실측. 해당 지번의 대표 동(연면적 최대) 기준이며, 필지 내 여러 동이 있으면 동별 편차가 있을 수 있습니다.</div></div>';
+  }
+
   // 현장·행정 자료 딥링크
   const eu='https://www.eum.go.kr/web/ar/lu/luLandDet.jsp';
   const vw='https://map.vworld.kr/map/maps.do#'+d.lat+','+d.lon+',18';
@@ -769,6 +797,28 @@ function render(d){
       if(d.radius){L.circle([d.lat,d.lon],{radius:d.radius,color:'#0f172a',weight:1,fillColor:'#0f172a',fillOpacity:.05}).addTo(_map);}
       _map.on('click',function(e){ runAt(e.latlng.lat, e.latlng.lng); });
       setTimeout(()=>{if(_map)_map.invalidateSize();},200);
+    }
+  }catch(e){}
+
+  // 카카오 로드뷰 인라인(대상지 좌표 자동)
+  try{
+    const rv=document.getElementById('road');
+    if(rv){
+      if(window.kakao && kakao.maps){
+        kakao.maps.load(function(){
+          try{
+            const pos=new kakao.maps.LatLng(d.lat,d.lon);
+            const roadview=new kakao.maps.Roadview(rv);
+            const client=new kakao.maps.RoadviewClient();
+            client.getNearestPanoId(pos,80,function(panoId){
+              if(panoId){roadview.setPanoId(panoId,pos);setTimeout(()=>roadview.relayout&&roadview.relayout(),200);}
+              else{rv.innerHTML='<div style="padding:20px;color:var(--n400);font-size:13px">이 지점 인근에 로드뷰가 없습니다. 아래 \'카카오 로드뷰 열기\'로 확인하세요.</div>';}
+            });
+          }catch(e){rv.innerHTML='<div style="padding:20px;color:var(--n400);font-size:13px">로드뷰를 표시할 수 없습니다.</div>';}
+        });
+      }else{
+        rv.innerHTML='<div style="padding:20px;color:var(--n400);font-size:13px">로드뷰 키가 설정되지 않았습니다. 아래 딥링크로 확인하세요.</div>';
+      }
     }
   }catch(e){}
 }
