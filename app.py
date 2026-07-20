@@ -423,6 +423,19 @@ input#addr::placeholder{color:var(--n400)}
 .drawinfo{font-size:12px;color:var(--n600);margin:0 0 10px}
 .drawinfo b{color:var(--fg);font-weight:700}
 .mapcard.drawing #map{cursor:crosshair}
+.anatabs{display:flex;flex-wrap:wrap;gap:6px;background:var(--n100);border:1px solid var(--n200);border-radius:12px;padding:4px;margin:0 0 20px}
+.anatab{border:0;background:transparent;font-family:inherit;font-size:14px;font-weight:600;color:var(--n600);border-radius:9px;padding:9px 16px;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.anatab.on{background:var(--card);color:var(--fg);box-shadow:var(--shadow)}
+.anatab.soon{color:var(--n500)}
+.anatab .soonbadge{font-size:10px;font-weight:700;color:var(--n500);background:var(--n200);border-radius:6px;padding:2px 6px}
+.soonpanel{border-style:dashed}
+.soonhead{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.soonic{color:var(--n400)}
+.soontitle{font-size:18px;font-weight:700}
+.soonsub{font-size:12px;color:var(--n500);margin-top:2px}
+.soondesc{font-size:13px;line-height:1.7;color:var(--n700);background:var(--n50);border-radius:10px;padding:14px 16px}
+.soondesc b{font-weight:700}
+.soonnote{margin-top:12px;font-size:12px;color:var(--n500);line-height:1.6}
 .leaflet-container{border-radius:0}
 
 /* 카드 헤더 */
@@ -681,9 +694,14 @@ function meter(ind){
   return '<div class=meter><div class=mtrack><div class=mzero></div><div class=mdiv style="left:'+left+'%;width:'+w+'%;background:'+col2+'"></div></div><div class=mcap><span>감소</span><span class=mthrlab>0%</span><span>증가</span></div></div>';
 }
 
+// ── 분석 유형 탭 (구역계 공통입력 · 확장 골격) ──
+function tabBar(active){ var t=['쇠퇴분석','교통분석','토지분석','안전·범죄','종합분석']; var s='<div class="anatabs no-print">'; for(var i=0;i<t.length;i++){ s+='<button class="anatab'+(i===active?' on':'')+(i>0?' soon':'')+'" onclick="showTab('+i+')">'+t[i]+(i>0?'<span class=soonbadge>준비중</span>':'')+'</button>'; } return s+'</div>'; }
+function placeholderCard(i){ var M=[null,{t:'교통분석',d:'도로 위계(대로·중로·소로·이면도로), 골목 관통형/막다른형, 도로폭, 불법주차 대수, 주변 산단·대형차 통행량, 법적 검토 API',n:'로드맵 확장 ①'},{t:'토지분석',d:'국유지·구유지·사유지 구분, 소유주체(국토부·군) 확인, 주차장 조성 가능 필지 도출·면수 산정',n:'로드맵 확장 ②'},{t:'안전·범죄 분석',d:'범죄율, 생활안전지도 안전등급, 교통사고 다발지점 — CPTED(범죄예방 환경설계) 사업 근거',n:'로드맵 확장 ③'},{t:'종합분석',d:'쇠퇴·교통·토지·안전 종합 → 인사이트 → 아이템(자사 제안서 학습) → 지도 접점 → 마스터플랜',n:'로드맵 최종 · 올해 목표'}][i]; return '<div class="card soonpanel"><div class=soonhead><span class=soonic>'+IC.grid+'</span><div><div class=soontitle>'+esc(M.t)+'</div><div class=soonsub>'+esc(M.n)+' · 준비 중</div></div></div><div class=soondesc><b>예정 항목</b><br>'+esc(M.d)+'</div><div class=soonnote>구역계 입력값을 그대로 공유해, 같은 구역에 이 분석을 추가하는 방식으로 확장됩니다 (별도 대시보드가 아니라 탭).</div></div>'; }
+function showTab(i){ if(i===0){ if(window._lastD)render(window._lastD); return; } var out=document.getElementById('out'); out.innerHTML=tabBar(i)+placeholderCard(i); out.scrollIntoView({behavior:'smooth',block:'start'}); }
+
 function render(d){
   const dg=d.diagnosis, c=d.commercial, v=d.vacancy, secs=d.grades_by_sector||{};
-  let h='';
+  let h=''; window._lastD=d; h+=tabBar(0);
 
   // 툴바(뒤로 + 전체 PDF)
   h+='<div class="toolbar no-print"><div class=backrow onclick="reset()">'+IC.back+'다른 지역 진단</div>'
