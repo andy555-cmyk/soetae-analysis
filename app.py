@@ -414,6 +414,15 @@ input#addr::placeholder{color:var(--n400)}
 .memo .note{margin-top:16px;font-size:12px;color:var(--n500)}
 .mapcard{overflow:hidden;border:1px solid var(--n200);border-radius:16px;box-shadow:var(--shadow)}
 #map{height:340px;width:100%}
+.zonebar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 10px}
+.zbtn{border:1px solid var(--n200);background:var(--card);color:var(--n700);font-family:inherit;font-size:13px;font-weight:600;border-radius:9px;padding:8px 12px;cursor:pointer}
+.zbtn:hover{border-color:var(--n400)}
+.zbtn.solid{background:var(--red600);border-color:var(--red600);color:#fff}
+.zsel{border:1px solid var(--n200);background:var(--card);color:var(--n700);font-family:inherit;font-size:13px;border-radius:9px;padding:8px 10px}
+.drawstat{font-size:12px;color:var(--red700);margin:0 0 8px}
+.drawinfo{font-size:12px;color:var(--n600);margin:0 0 10px}
+.drawinfo b{color:var(--fg);font-weight:700}
+.mapcard.drawing #map{cursor:crosshair}
 .leaflet-container{border-radius:0}
 
 /* 카드 헤더 */
@@ -547,6 +556,7 @@ input#addr::placeholder{color:var(--n400)}
 <script>
 const out=document.getElementById('out');
 let RADIUS=500, _map=null;
+let _drawMode=false, _polyPts=[], _polyLayer=null, _polyLine=null, _vtxLayer=null, _zoneCentroid=null, _zoneRadius=null;
 function esc(s){return (s==null?'':(''+s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
 // 등급 색
@@ -602,6 +612,7 @@ document.getElementById('feats').innerHTML=FEATS.map(f=>
 
 async function run(){
   const a=document.getElementById('addr').value.trim(); if(!a)return;
+  _polyPts=[];
   const btn=document.getElementById('go'); btn.disabled=true;
   out.innerHTML='<div class="card"><div class=loading><div class=spin></div>정부 데이터를 불러오는 중…</div></div>';
   out.scrollIntoView({behavior:'smooth',block:'start'});
@@ -723,7 +734,7 @@ function render(d){
   }
 
   // 지도 + 메모
-  h+='<section class=sec2><div><div class=h3>지역 위치 <span style="font-weight:400;color:var(--n400);font-size:12px">· 지도 클릭 = 그 지점 재진단 · 우측 상단에서 위성 전환</span></div><div class=mapcard><div id=map></div></div>'
+  h+='<section class=sec2><div><div class=h3>지역 위치 <span style="font-weight:400;color:var(--n400);font-size:12px">· 클릭=그 지점 재진단 · 구역계 그리기=다각형 분석 · 우측 상단 위성전환</span></div><div class=zonebar><button class=zbtn id=btnDraw onclick="startDraw()">구역계 그리기</button><button class=zbtn id=btnFinish onclick="finishDraw()" style="display:none">완료</button><button class="zbtn solid" id=btnAnalyze onclick="analyzeZone()" style="display:none">이 구역계로 분석</button><button class=zbtn id=btnClear onclick="clearDraw()">초기화</button><select id=zoneSel class=zsel onchange="loadZone(this.value)"><option value="">저장된 구역계…</option></select><button class=zbtn id=btnSave onclick="saveZone()" style="display:none">저장</button></div><div class=drawstat id=drawstat></div><div class=drawinfo id=drawinfo></div><div class=mapcard><div id=map></div></div>'
     +'<div class=h3 style="margin-top:16px">현장 로드뷰 <span style="font-weight:400;color:var(--n400);font-size:12px">· 대상지 좌표 자동 삽입</span></div>'
     +'<div class=mapcard><div id=road style="height:280px;border-radius:12px;overflow:hidden;background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:var(--n400);font-size:13px">로드뷰 불러오는 중…</div></div></div>'
     +'<div><div class=h3>진단 요약 메모</div><div class="card memo">';
@@ -828,7 +839,7 @@ function render(d){
       const ic=L.divIcon({className:'',html:'<div style="width:24px;height:24px;border-radius:50%;background:#dc2626;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3)"></div>',iconSize:[24,24],iconAnchor:[12,12]});
       L.marker([d.lat,d.lon],{icon:ic}).addTo(_map).bindPopup(esc(d.address));
       if(d.radius){L.circle([d.lat,d.lon],{radius:d.radius,color:'#0f172a',weight:1,fillColor:'#0f172a',fillOpacity:.05}).addTo(_map);}
-      _map.on('click',function(e){ runAt(e.latlng.lat, e.latlng.lng); });
+      _map.on('click',function(e){ if(_drawMode){addVertex(e.latlng.lat,e.latlng.lng);}else{runAt(e.latlng.lat,e.latlng.lng);} }); if(_polyPts&&_polyPts.length>=3){try{_polyLayer=L.polygon(_polyPts,{color:'#dc2626',weight:2,fillColor:'#dc2626',fillOpacity:.12}).addTo(_map);_renderZoneInfo(true);_updateDrawBtns();}catch(e){}} _refreshZoneList();
       setTimeout(()=>{if(_map)_map.invalidateSize();},200);
     }
   }catch(e){}
@@ -855,6 +866,23 @@ function render(d){
     }
   }catch(e){}
 }
+
+// 구역계(폴리곤) 입력
+function _fmtArea(m2){ if(m2>=1000000) return (m2/1000000).toFixed(2)+' km²'; return Math.round(m2).toLocaleString()+' m² ('+Math.round(m2/3.3058).toLocaleString()+'평)'; }
+function _polyArea(pts){ if(pts.length<3)return 0; var R=6378137,rad=Math.PI/180,s=0; for(var i=0;i<pts.length;i++){var a=pts[i],b=pts[(i+1)%pts.length]; s+=(b[1]-a[1])*rad*(2+Math.sin(a[0]*rad)+Math.sin(b[0]*rad));} return Math.abs(s*R*R/2); }
+function _centroid(pts){ var la=0,lo=0; pts.forEach(function(p){la+=p[0];lo+=p[1];}); return [la/pts.length,lo/pts.length]; }
+function _distM(a,b){ var R=6378137,rad=Math.PI/180,dLat=(b[0]-a[0])*rad,dLon=(b[1]-a[1])*rad; var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a[0]*rad)*Math.cos(b[0]*rad)*Math.sin(dLon/2)*Math.sin(dLon/2); return 2*R*Math.asin(Math.sqrt(x)); }
+function startDraw(){ if(!_map)return; clearDraw(true); _drawMode=true; var mc=document.querySelector('.mapcard'); if(mc)mc.classList.add('drawing'); var st=document.getElementById('drawstat'); if(st)st.textContent='그리기 모드 — 지도를 클릭해 꼭짓점을 찍고(3개 이상), 완료를 누르세요.'; _updateDrawBtns(); }
+function addVertex(lat,lng){ _polyPts.push([lat,lng]); if(!_vtxLayer)_vtxLayer=L.layerGroup().addTo(_map); _vtxLayer.addLayer(L.circleMarker([lat,lng],{radius:5,color:'#dc2626',fillColor:'#fff',fillOpacity:1,weight:2})); if(_polyLine)_map.removeLayer(_polyLine); _polyLine=L.polyline(_polyPts,{color:'#dc2626',weight:2,dashArray:'5,5'}).addTo(_map); _renderZoneInfo(false); _updateDrawBtns(); }
+function _drawPolygon(){ if(_polyLine){_map.removeLayer(_polyLine);_polyLine=null;} if(_polyLayer){_map.removeLayer(_polyLayer);_polyLayer=null;} _polyLayer=L.polygon(_polyPts,{color:'#dc2626',weight:2,fillColor:'#dc2626',fillOpacity:.12}).addTo(_map); try{_map.fitBounds(_polyLayer.getBounds(),{padding:[20,20]});}catch(e){} _renderZoneInfo(true); _updateDrawBtns(); }
+function finishDraw(){ if(_polyPts.length<3){alert('꼭짓점을 3개 이상 찍어주세요.');return;} _drawMode=false; var mc=document.querySelector('.mapcard'); if(mc)mc.classList.remove('drawing'); _drawPolygon(); }
+function clearDraw(silent){ _polyPts=[]; if(_map){ if(_polyLine)_map.removeLayer(_polyLine); if(_polyLayer)_map.removeLayer(_polyLayer); if(_vtxLayer)_map.removeLayer(_vtxLayer);} _polyLine=null;_polyLayer=null;_vtxLayer=null;_zoneCentroid=null;_zoneRadius=null; if(!silent){_drawMode=false; var mc=document.querySelector('.mapcard'); if(mc)mc.classList.remove('drawing');} _renderZoneInfo(false); _updateDrawBtns(); }
+function _renderZoneInfo(closed){ var el=document.getElementById('drawinfo'); if(!el)return; if(!_polyPts.length){el.innerHTML='';var s0=document.getElementById('drawstat');if(s0&&!_drawMode)s0.textContent='';return;} var c=_centroid(_polyPts); _zoneCentroid=c; var mx=0; _polyPts.forEach(function(p){mx=Math.max(mx,_distM(c,p));}); _zoneRadius=Math.min(3000,Math.max(300,Math.round(mx))); var area=closed?_polyArea(_polyPts):0; el.innerHTML='<b>꼭짓점</b> '+_polyPts.length+'개'+(closed?(' · <b>면적</b> '+_fmtArea(area)+' · <b>중심</b> '+c[0].toFixed(5)+', '+c[1].toFixed(5)+' · <b>분석반경</b> '+_zoneRadius+'m'):' (그리는 중…)'); }
+function _updateDrawBtns(){ var closed=!!_polyLayer; var f=document.getElementById('btnFinish'),a=document.getElementById('btnAnalyze'),s=document.getElementById('btnSave'); if(f)f.style.display=(_drawMode&&_polyPts.length>=3)?'':'none'; if(a)a.style.display=closed?'':'none'; if(s)s.style.display=closed?'':'none'; }
+async function analyzeZone(){ if(!_zoneCentroid){alert('먼저 구역계를 완성하세요.');return;} RADIUS=_zoneRadius||RADIUS; await runAt(_zoneCentroid[0],_zoneCentroid[1]); }
+function saveZone(){ if(!_polyPts.length){alert('저장할 구역계가 없습니다.');return;} var name=prompt('구역계 이름 (예: 산청 사업구역 2026)'); if(!name)return; var z=JSON.parse(localStorage.getItem('soetae_zones')||'{}'); z[name]={pts:_polyPts,addr:document.getElementById('addr').value,ts:Date.now()}; localStorage.setItem('soetae_zones',JSON.stringify(z)); _refreshZoneList(); alert('저장됨: '+name); }
+function _refreshZoneList(){ var sel=document.getElementById('zoneSel'); if(!sel)return; var z=JSON.parse(localStorage.getItem('soetae_zones')||'{}'); var ns=Object.keys(z); sel.innerHTML='<option value="">저장된 구역계… ('+ns.length+')</option>'+ns.map(function(n){return '<option value="'+esc(n)+'">'+esc(n)+'</option>';}).join(''); }
+function loadZone(name){ if(!name||!_map)return; var z=JSON.parse(localStorage.getItem('soetae_zones')||'{}'); var zz=z[name]; if(!zz)return; _polyPts=zz.pts.slice(); if(zz.addr)document.getElementById('addr').value=zz.addr; _drawMode=false; var mc=document.querySelector('.mapcard'); if(mc)mc.classList.remove('drawing'); if(_vtxLayer){_map.removeLayer(_vtxLayer);_vtxLayer=null;} _drawPolygon(); }
 
 async function runAt(lat, lon){
   RADIUS = RADIUS || 500;
