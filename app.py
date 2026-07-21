@@ -431,7 +431,7 @@ input#addr::placeholder{color:var(--n400)}
 .memo .bad{color:var(--red600)} .memo .good{color:var(--em600)}
 .memo .note{margin-top:16px;font-size:12px;color:var(--n500)}
 .mapcard{overflow:hidden;border:1px solid var(--n200);border-radius:16px;box-shadow:var(--shadow)}
-#map{height:340px;width:100%}
+#map{height:520px;width:100%}
 .zonebar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 10px}
 .zbtn{border:1px solid var(--n200);background:var(--card);color:var(--n700);font-family:inherit;font-size:13px;font-weight:600;border-radius:9px;padding:8px 12px;cursor:pointer}
 .zbtn:hover{border-color:var(--n400)}
@@ -792,19 +792,36 @@ function render(d){
     h+='</section>';
   }
 
-  // 지도 + 메모
-  h+='<section class=sec2><div><div class=h3>지역 위치 <span style="font-weight:400;color:var(--n400);font-size:12px">· 클릭=그 지점 재진단 · 구역계 그리기=다각형 분석 · 우측 상단 위성전환</span></div><div class=zonebar><button class=zbtn id=btnDraw onclick="startDraw()">구역계 그리기</button><button class=zbtn id=btnUndo onclick="undoVertex()" style="display:none">← 마지막 점 취소</button><button class="zbtn solid" id=btnFinish onclick="finishDraw()" style="display:none">완료(더블클릭)</button><button class="zbtn solid" id=btnAnalyze onclick="analyzeZone()" style="display:none">이 구역계로 분석</button><button class=zbtn id=btnClear onclick="clearDraw()">초기화</button><select id=zoneSel class=zsel onchange="loadZone(this.value)"><option value="">저장된 구역계…</option></select><button class=zbtn id=btnSave onclick="saveZone()" style="display:none">저장</button></div><div class=drawstat id=drawstat></div><div class=drawinfo id=drawinfo></div><div class=mapcard><div id=map></div></div>'
-    +'<div class=h3 style="margin-top:16px">현장 로드뷰 <span style="font-weight:400;color:var(--n400);font-size:12px">· 대상지 좌표 자동 삽입</span></div>'
-    +'<div class=mapcard><div id=road style="height:280px;border-radius:12px;overflow:hidden;background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:var(--n400);font-size:13px">로드뷰 불러오는 중…</div></div></div>'
-    +'<div><div class=h3>진단 요약 메모</div><div class="card memo">';
+  // 진단 요약 · 종합 분석 (지도 위 전폭 전용 칸) — Andy 요청
+  h+='<div class="card memo memofull"><div class=h3 style="margin:0 0 12px">진단 요약 · 종합 분석</div>';
   if(dg){
-    h+='<p><strong>'+esc(d.sigungu||'')+'</strong> 일대는 '+esc(d.grade_year)+'년 기준 3대 쇠퇴진단지표 중 '
-      +'<strong class="'+(dg.is_declining?'bad':'good')+'">'+dg.decline_count+'개</strong> 항목이 전국 하위권(쇠퇴 우세)으로 나타났습니다.</p>';
-    if(dg.is_declining){h+='<p style="margin-top:12px;color:var(--n600)">2개 이상 쇠퇴 우세 시 「도시재생 활성화 및 지원에 관한 특별법」상 활성화지역 지정 검토 대상에 해당할 수 있습니다. 다음 단계로 ① 잠재력 지표(자산·접근성·생활편의) 분석, ② 주민의견 수렴, ③ 도시재생전략계획 수립을 권장합니다.</p>';}
-    else{h+='<p style="margin-top:12px;color:var(--n600)">정량 쇠퇴 신호는 크지 않으나, 개별 지표 등급이 낮은 항목은 선제적 관리를 고려해야 합니다. 상권·빈점포 추이와 함께 판단하세요.</p>';}
+    const mpop=dg.indicators.filter(function(i){return i.code==='POP';})[0];
+    const mbiz=dg.indicators.filter(function(i){return i.code==='BIZ';})[0];
+    const mbld=dg.indicators.filter(function(i){return i.code==='BLDG';})[0];
+    const vtxt=function(ind){ if(!ind)return '–'; return (ind.display_value==null?'–':ind.display_value)+esc(ind.display_unit||'')+' · '+esc(ind.status); };
+    h+='<p><strong>'+esc(d.sigungu||'')+' '+esc(d.emd||'')+'</strong> 일대는 '+esc(d.grade_year)+'년 기준연도 데이터로 분석한 결과, 3대 쇠퇴진단지표 중 <strong class="'+(dg.is_declining?'bad':'good')+'">'+dg.decline_count+'개</strong>에서 쇠퇴 '+(dg.real_used?'신호':'우세')+'가 확인되어 종합 <strong>'+esc(dg.overall_grade)+'등급('+esc(dg.overall_label)+')</strong>으로 진단됩니다.</p>';
+    h+='<p style="margin-top:12px"><strong>① 인구 변화</strong> '+vtxt(mpop)+' — '+(mpop&&mpop.is_decline?'감소 방향으로 정주 인구 기반이 약화되고 있습니다.':'뚜렷한 감소는 확인되지 않았습니다.')+' <strong>② 사업체 변화</strong> '+vtxt(mbiz)+' — '+(mbiz&&mbiz.is_decline?'고용·상권 기반의 경제활동 축소 신호입니다.':'경제활동 기반은 유지 수준입니다.')+' <strong>③ 노후 건축물</strong> '+vtxt(mbld)+' — 법정 기준(준공 20년↑ 비율 50%↑) '+(mbld&&mbld.is_decline?'<span class=bad>충족</span>으로 물리적 노후가 심화되어 직접 판정이 가능합니다.':'미충족으로 물리환경 노후는 아직 임계 이하입니다.')+'</p>';
+    const ts=(c&&c.total_stores)||0;
+    const topcat=Object.entries((c&&c.by_major_category)||{}).sort(function(a,b){return b[1]-a[1];})[0];
+    h+='<p style="margin-top:12px"><strong>상권 현황</strong> — 반경 '+((d.radius||500)>=1000?((d.radius)/1000)+'km':(d.radius||500)+'m')+' 내 영업 점포 '+ts+'개'+(topcat?', 최다 업종 '+esc(topcat[0])+'('+topcat[1]+'개)':'')+'. '+(ts>=400?'상권이 밀집돼 유동·소비 기반이 상대적으로 두텁습니다.':(ts>=150?'상권 규모는 보통 수준입니다.':(ts>0?'상권이 희소해 자족 기능이 약합니다.':'반경 내 상권 데이터가 확인되지 않습니다.')))+'</p>';
+    if(v&&v.has_prev){ h+='<p style="margin-top:12px"><strong>빈 점포·폐업</strong> — '+esc(v.t0_date)+' → '+esc(v.t1_date)+' 사이 폐업 추정 '+v.closed+'개 · 신규 '+v.opened+'개 · 폐업률 '+v.closure_rate_pct+'%.'+(v.gonga!=null?' 주거 공가율(빈집) 등급 '+v.gonga+'/10.':'')+'</p>'; }
+    else if(v){ h+='<p style="margin-top:12px"><strong>빈 점포·폐업</strong> — 기준 스냅샷 저장('+esc(v.base_date)+' · '+v.base_count+'개). 상가정보 분기 갱신 후 재실행 시 폐업·순증감이 자동 산출됩니다.'+(v.gonga!=null?' 주거 공가율(빈집) 등급 '+v.gonga+'/10.':'')+'</p>'; }
+    if(d.building&&d.building.approved_year){ const age=new Date().getFullYear()-d.building.approved_year; h+='<p style="margin-top:12px"><strong>대상 건물(건축물대장)</strong> — 사용승인 '+d.building.approved_year+'년(노후 '+age+'년)'+(d.building.purpose?' · 주용도 '+esc(d.building.purpose):'')+(d.building.floors_up!=null?' · 지상 '+d.building.floors_up+'층':'')+'. '+(age>=30?'준공 30년 이상 노후건축물로 법정 노후 요건에 직접 해당합니다.':'')+'</p>'; }
+    if(dg.is_declining){ h+='<p style="margin-top:14px;color:var(--n600)"><strong>다음 단계</strong> — 2개 이상 쇠퇴 신호로 「도시재생 활성화 및 지원에 관한 특별법」상 활성화지역 지정 검토 대상에 해당할 수 있습니다. 권장 절차: ① 잠재력 지표(자산·접근성·생활편의) 분석, ② 주민의견 수렴, ③ 도시재생전략계획 수립, ④ 대상지 컨셉·비전 도출.</p>'; }
+    else { h+='<p style="margin-top:14px;color:var(--n600)"><strong>다음 단계</strong> — 정량 쇠퇴 신호는 기준 미달이나, 개별 지표가 낮은 항목(노후·고령화 등)은 선제 관리가 필요합니다. 상권·빈점포 추이와 병행 모니터링을 권장합니다.</p>'; }
     h+='<p class=note>'+esc(dg.basis_note)+'</p>';
-  }else{h+='<p class=note>이 지역의 쇠퇴등급 데이터를 불러오지 못했습니다.</p>';}
-  h+='</div></div></section>';
+  } else { h+='<p class=note>이 지역의 쇠퇴등급 데이터를 불러오지 못했습니다. (상권·지도·건축물대장은 아래에서 확인)</p>'; }
+  h+='</div>';
+
+  // 지역 위치 지도 (전폭·확대)
+  h+='<div><div class=h3>지역 위치 <span style="font-weight:400;color:var(--n400);font-size:12px">· 클릭=그 지점 재진단 · 구역계 그리기=다각형 분석 · 우측 상단 위성전환</span></div><div class=zonebar><button class=zbtn id=btnDraw onclick="startDraw()">구역계 그리기</button><button class=zbtn id=btnUndo onclick="undoVertex()" style="display:none">← 마지막 점 취소</button><button class="zbtn solid" id=btnFinish onclick="finishDraw()" style="display:none">완료(더블클릭)</button><button class="zbtn solid" id=btnAnalyze onclick="analyzeZone()" style="display:none">이 구역계로 분석</button><button class=zbtn id=btnClear onclick="clearDraw()">초기화</button><select id=zoneSel class=zsel onchange="loadZone(this.value)"><option value="">저장된 구역계…</option></select><button class=zbtn id=btnSave onclick="saveZone()" style="display:none">저장</button></div><div class=drawstat id=drawstat></div><div class=drawinfo id=drawinfo></div><div class=mapcard><div id=map></div></div></div>';
+
+  // 현장 로드뷰 (확대)
+  h+='<div><div class=h3 style="margin-top:0">현장 로드뷰 <span style="font-weight:400;color:var(--n400);font-size:12px">· 대상지 좌표 자동 삽입</span></div>'
+    +'<div class=mapcard><div id=road style="height:460px;border-radius:12px;overflow:hidden;background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:var(--n400);font-size:13px">로드뷰 불러오는 중…</div></div></div>';
+
+  // 종합 핵심 진단 (현장 로드뷰 아래) — Andy 요청 위치
+  h+=coreSummary(d);
 
   // 상권 현황
   h+='<div class=card><div class=chead><div class=ct2><span class=ci2>'+IC.store+'</span>상권 현황</div><div style="display:flex;align-items:center;gap:8px"><span class=cn>반경 '+((d.radius||500)>=1000?((d.radius)/1000)+'km':(d.radius||500)+'m')+'</span><button class="pdfmini no-print" onclick="printOne(this.closest(\'.card\'))">'+IC.dl+' PDF</button></div></div>';
@@ -884,9 +901,6 @@ function render(d){
     +'<a class=linkc target=_blank rel=noopener href="'+vw+'"><div class=lt>브이월드 지도</div><div class=ld>지적도·항공영상·3D·건물정보 열람</div><div class=lg>대상지 열기 '+IC.ext+'</div></a>'
     +'<a class=linkc target=_blank rel=noopener href="'+kk+'"><div class=lt>카카오 로드뷰</div><div class=ld>현장 로드뷰·거리 이미지 (네이버 지도도 지원)</div><div class=lg>로드뷰 열기 '+IC.ext+'</div></a>'
     +'</div><div class=cnote>토지이음은 좌표 직접 이동을 지원하지 않아 주소로 검색하세요. 브이월드·로드뷰는 대상지 좌표로 바로 이동합니다.</div></div>';
-
-  // 종합 핵심 진단(하단 대형)
-  h+=coreSummary(d);
 
   out.innerHTML=h;
 
